@@ -1,5 +1,7 @@
 # cbp7501-consumer
 
+> [English documentation](README.en.md)
+
 CBP Form 7501（美国海关进口报关单）PDF 解析服务。从 RabbitMQ 接收任务，下载 PDF 并解析为结构化 JSON，再将结果回传至输出队列。
 
 ## 功能
