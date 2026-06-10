@@ -1,0 +1,169 @@
+{
+  "header": {
+    "form": "CBP 7501",
+    "filer_code_entry_number": "9H3-0051130-4",
+    "entry_type": "01",
+    "summary_date": "",
+    "surety_number": "036",
+    "bond_type": "8",
+    "port_code": "2704",
+    "entry_date": "",
+    "importing_carrier": "GERDA MAERSK (MAEU)",
+    "country_of_origin": "KH",
+    "import_date": "04/22/2026",
+    "bl_number": "MAEU266701559",
+    "manufacturer_id": "KHCOLSTAKRA",
+    "exporting_country": "KH",
+    "export_date": "03/18/2026",
+    "foreign_port_of_lading": "55500",
+    "us_port_of_unlading": "2704",
+    "location_of_goods": "",
+    "reference_number": "30-069900900",
+    "manifest_quantity": "520 CT",
+    "consignee": {
+      "number": "33-423164900",
+      "name": "FYORIAN LABS INC",
+      "street": "357 MCCASLIN BLVD STE 203",
+      "city": "LOUISVILLE",
+      "state": "CO",
+      "zip": "80027-2932"
+    },
+    "importer_of_record": {
+      "number": "242704-58216",
+      "name": "NINGBO DIJING TRADING CO.",
+      "street": "SHOUNAN STREET, YINZHOU DISTRICT",
+      "city": "NINGBO",
+      "state": "ZJ",
+      "country": "KH",
+      "zip": "315000"
+    },
+    "totals": {
+      "entered_value_usd": 8911.0,
+      "duty_usd": 891.1,
+      "other_fees_usd": 11.14,
+      "grand_total_usd": 902.24,
+      "mpf_usd": null,
+      "hmf_usd": 11.14
+    }
+  },
+  "line_items": [
+    {
+      "line_no": "001",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "description": "OTH THN CMP KTCH CBNT/VAN PRT",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.76.04",
+          "steel_weight_kg": 6765.0,
+          "qty": null,
+          "rate": "Free",
+          "amount": 0.0
+        },
+        {
+          "htsus": "9903.03.01",
+          "steel_weight_kg": null,
+          "qty": "X",
+          "rate": "10%",
+          "amount": 263.4
+        }
+      ],
+      "commodity": {
+        "htsus": "9403.60.8093",
+        "description": "OTH, WOOD, FURNITRE, PRTS, OTH",
+        "net_qty": 150.0,
+        "net_qty_unit": "NO",
+        "entered_value": 2634.0,
+        "htsus_rate": "Free",
+        "duty_amount": 0.0
+      },
+      "fees": [
+        {
+          "code": "501",
+          "description": "HARBOR MAINTENANCE FEE (HMF)",
+          "rate": "0.125%",
+          "amount": 3.29
+        }
+      ]
+    },
+    {
+      "line_no": "002",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "description": "OTH THN CMP KTCH CBNT/VAN PRT",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.76.04",
+          "steel_weight_kg": 8118.0,
+          "qty": null,
+          "rate": "Free",
+          "amount": 0.0
+        },
+        {
+          "htsus": "9903.03.01",
+          "steel_weight_kg": null,
+          "qty": "X",
+          "rate": "10%",
+          "amount": 316.1
+        }
+      ],
+      "commodity": {
+        "htsus": "9403.60.8093",
+        "description": "OTH, WOOD, FURNITRE, PRTS, OTH",
+        "net_qty": 180.0,
+        "net_qty_unit": "NO",
+        "entered_value": 3161.0,
+        "htsus_rate": "Free",
+        "duty_amount": 0.0
+      },
+      "fees": [
+        {
+          "code": "501",
+          "description": "HARBOR MAINTENANCE FEE (HMF)",
+          "rate": "0.125%",
+          "amount": 3.95
+        }
+      ]
+    },
+    {
+      "line_no": "003",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "description": "OTH THN CMP KTCH CBNT/VAN PRT",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.76.04",
+          "steel_weight_kg": 7448.0,
+          "qty": null,
+          "rate": "Free",
+          "amount": 0.0
+        },
+        {
+          "htsus": "9903.03.01",
+          "steel_weight_kg": null,
+          "qty": "X",
+          "rate": "10%",
+          "amount": 311.6
+        }
+      ],
+      "commodity": {
+        "htsus": "9403.60.8093",
+        "description": "OTH, WOOD, FURNITRE, PRTS, OTH",
+        "net_qty": 190.0,
+        "net_qty_unit": "NO",
+        "entered_value": 3116.0,
+        "htsus_rate": "Free",
+        "duty_amount": 0.0
+      },
+      "fees": [
+        {
+          "code": "501",
+          "description": "HARBOR MAINTENANCE FEE (HMF)",
+          "rate": "0.125%",
+          "amount": 3.9
+        }
+      ]
+    }
+  ],
+  "line_item_count": 3
+}

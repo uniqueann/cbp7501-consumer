@@ -1,0 +1,731 @@
+{
+  "header": {
+    "form": "CBP 7501",
+    "filer_code_entry_number": "",
+    "entry_type": "ABI/A",
+    "summary_date": "02/26/26",
+    "surety_number": "856",
+    "bond_type": "8",
+    "port_code": "2704",
+    "entry_date": "02/14/26",
+    "importing_carrier": "CMA CGM FORT DIAMANT",
+    "country_of_origin": "CN",
+    "import_date": "02/14/26",
+    "bl_number": "CMDU GGZ2832805",
+    "manufacturer_id": "CNGUAMAR4021ZHO",
+    "exporting_country": "CN",
+    "export_date": "01/22/26",
+    "foreign_port_of_lading": "57078",
+    "us_port_of_unlading": "2704",
+    "location_of_goods": "Y257 Voyage: 1MA",
+    "reference_number": "ZBHK25121632",
+    "manifest_quantity": "887 CTN",
+    "consignee": {
+      "name": "KBJ TRADING LLC",
+      "street": "LIN LI SOLE MBR 13083 SLOVER AVE",
+      "city": "FONTANA",
+      "state": "CA",
+      "zip": "92337-6970"
+    },
+    "importer_of_record": {
+      "name": "WUHAN JIU ZHOU TONG TRADING CO,.",
+      "street": "NO.95 GANLISHUWAN, LIANGTING VIL",
+      "city": "WUHAN",
+      "country": "CN",
+      "zip": "43000"
+    },
+    "totals": {
+      "entered_value_usd": 8051.0,
+      "duty_usd": 2568.06,
+      "other_fees_usd": 43.65,
+      "grand_total_usd": 2611.71,
+      "mpf_usd": 33.58,
+      "hmf_usd": 10.07
+    }
+  },
+  "line_items": [
+    {
+      "line_no": "001",
+      "line_type": "STANDARD",
+      "manifest_note": "887 CTN",
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(R)",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 86.6
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 86.6
+        },
+        {
+          "htsus": "9903.88.15",
+          "steel_weight_kg": null,
+          "rate": "7.5%",
+          "amount": 64.95
+        }
+      ],
+      "commodity": {
+        "description": "GYM/PLAYGRND EXERC EQUIP;OTHER",
+        "htsus": "9506.91.0030",
+        "gross_weight_kg": 1551.0,
+        "net_quantity": 65.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 866.0,
+        "htsus_rate": "4.6%",
+        "duty_amount": 39.84
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 3.0
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 1.08
+        }
+      ]
+    },
+    {
+      "line_no": "002",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(F)",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 58.3
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 58.3
+        },
+        {
+          "htsus": "9903.88.03",
+          "steel_weight_kg": null,
+          "rate": "25%",
+          "amount": 145.75
+        }
+      ],
+      "commodity": {
+        "description": "ARMORED/REINFORCED SAFES, ETC.",
+        "htsus": "8303.00.0000",
+        "gross_weight_kg": 1045.0,
+        "net_quantity": 373.8,
+        "net_quantity_unit": "KG",
+        "entered_value": 583.0,
+        "htsus_rate": "3.8%",
+        "duty_amount": 22.15
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 2.02
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.73
+        }
+      ]
+    },
+    {
+      "line_no": "003",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | ARTICLE OF CHINA,US NTE 20(R) | CN/HK EO 10% DUTY",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 137.2
+        },
+        {
+          "htsus": "9903.88.15",
+          "steel_weight_kg": null,
+          "rate": "7.5%",
+          "amount": 102.9
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 137.2
+        }
+      ],
+      "commodity": {
+        "description": "OTHR GYM/SPORT EQUIP;PARTS&ACC",
+        "htsus": "9506.99.6080",
+        "gross_weight_kg": 2281.0,
+        "net_quantity": 140.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 1372.0,
+        "htsus_rate": "4%",
+        "duty_amount": 54.88
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 4.75
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 1.72
+        }
+      ]
+    },
+    {
+      "line_no": "004",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 95.2
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 95.2
+        }
+      ],
+      "commodity": {
+        "description": "FANS N/PERMANENT, OUTPUT<=125W",
+        "htsus": "8414.51.9090",
+        "gross_weight_kg": 1674.0,
+        "net_quantity": 270.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 952.0,
+        "htsus_rate": "4.7%",
+        "duty_amount": 44.74
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 3.3
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 1.19
+        }
+      ]
+    },
+    {
+      "line_no": "005",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(F)",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 43.9
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 43.9
+        },
+        {
+          "htsus": "9903.88.03",
+          "steel_weight_kg": null,
+          "rate": "25%",
+          "amount": 109.75
+        }
+      ],
+      "commodity": {
+        "description": "HAND-OP MECH APPL,10KG OR LESS",
+        "htsus": "8210.00.0000",
+        "gross_weight_kg": 773.0,
+        "net_quantity": 50.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 439.0,
+        "htsus_rate": "3.7%",
+        "duty_amount": 16.24
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 1.52
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.55
+        }
+      ]
+    },
+    {
+      "line_no": "006",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 106.7
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 106.7
+        }
+      ],
+      "commodity": {
+        "description": "COOK PLATES, GRILLERS,ETC, OTH",
+        "htsus": "8516.60.6000",
+        "gross_weight_kg": 1776.0,
+        "net_quantity": 498.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 1067.0,
+        "htsus_rate": "2.7%",
+        "duty_amount": 28.81
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 3.7
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 1.33
+        }
+      ]
+    },
+    {
+      "line_no": "007",
+      "line_type": "IEEPA_EXCLUSION_232",
+      "manifest_note": null,
+      "exclusion_note": "IEEPA-RECIPROCAL EXCLUSION 232 | CN/HK EO 10% DUTY | DERIV STL, NT16(N) ALL CTRIES",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.33",
+          "steel_weight_kg": null,
+          "rate": "FREE",
+          "amount": 0.0
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 11.9
+        },
+        {
+          "htsus": "9903.81.91",
+          "steel_weight_kg": 254.48,
+          "rate": "50%",
+          "amount": 59.5
+        }
+      ],
+      "commodity": {
+        "description": "COOK PLATES, GRILLERS,ETC, OTH",
+        "htsus": "8516.60.6000",
+        "gross_weight_kg": 283.0,
+        "net_quantity": 0.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 119.0,
+        "htsus_rate": "2.7%",
+        "duty_amount": 3.21
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 0.41
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.15
+        }
+      ]
+    },
+    {
+      "line_no": "008",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(R)",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 78.5
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 78.5
+        },
+        {
+          "htsus": "9903.88.15",
+          "steel_weight_kg": null,
+          "rate": "7.5%",
+          "amount": 58.88
+        }
+      ],
+      "commodity": {
+        "description": "STEAK KNIVES W/HNDL OF RUB/PLA",
+        "htsus": "8211.91.5030",
+        "gross_weight_kg": 1350.0,
+        "net_quantity": 504.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 785.0,
+        "htsus_rate": "$0.007 per NO + 3.7%",
+        "duty_amount": 32.57
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 2.72
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.98
+        }
+      ]
+    },
+    {
+      "line_no": "009",
+      "line_type": "IEEPA_EXCLUSION_232",
+      "manifest_note": null,
+      "exclusion_note": "IEEPA-RECIPROCAL EXCLUSION 232 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(R) | DERIV STL, NT16(N) ALL CTRIES",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.33",
+          "steel_weight_kg": null,
+          "rate": "FREE",
+          "amount": 0.0
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 8.7
+        },
+        {
+          "htsus": "9903.88.15",
+          "steel_weight_kg": null,
+          "rate": "7.5%",
+          "amount": 6.53
+        },
+        {
+          "htsus": "9903.81.91",
+          "steel_weight_kg": 122.47,
+          "rate": "50%",
+          "amount": 43.5
+        }
+      ],
+      "commodity": {
+        "description": "STEAK KNIVES W/HNDL OF RUB/PLA",
+        "htsus": "8211.91.5030",
+        "gross_weight_kg": 152.0,
+        "net_quantity": 0.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 87.0,
+        "htsus_rate": "$0.007 per NO + 3.7%",
+        "duty_amount": 3.22
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 0.3
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.11
+        }
+      ]
+    },
+    {
+      "line_no": "010",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(R)",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 69.3
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 69.3
+        },
+        {
+          "htsus": "9903.88.15",
+          "steel_weight_kg": null,
+          "rate": "7.5%",
+          "amount": 51.98
+        }
+      ],
+      "commodity": {
+        "description": "OTHR GYM/SPORT EQUIP;PARTS&ACC",
+        "htsus": "9506.99.6080",
+        "gross_weight_kg": 837.0,
+        "net_quantity": 45.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 693.0,
+        "htsus_rate": "4%",
+        "duty_amount": 27.72
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 2.4
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.87
+        }
+      ]
+    },
+    {
+      "line_no": "011",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 34.5
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 34.5
+        }
+      ],
+      "commodity": {
+        "description": "COOK PLATES, GRILLERS,ETC, OTH",
+        "htsus": "8516.60.6000",
+        "gross_weight_kg": 479.0,
+        "net_quantity": 40.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 345.0,
+        "htsus_rate": "2.7%",
+        "duty_amount": 9.32
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 1.2
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.43
+        }
+      ]
+    },
+    {
+      "line_no": "012",
+      "line_type": "IEEPA_EXCLUSION_232",
+      "manifest_note": null,
+      "exclusion_note": "IEEPA-RECIPROCAL EXCLUSION 232 | CN/HK EO 10% DUTY | DERIV STL, NT16(N) ALL CTRIES",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.33",
+          "steel_weight_kg": null,
+          "rate": "FREE",
+          "amount": 0.0
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 3.8
+        },
+        {
+          "htsus": "9903.81.91",
+          "steel_weight_kg": 136.85,
+          "rate": "50%",
+          "amount": 19.0
+        }
+      ],
+      "commodity": {
+        "description": "COOK PLATES, GRILLERS,ETC, OTH",
+        "htsus": "8516.60.6000",
+        "gross_weight_kg": 152.0,
+        "net_quantity": 0.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 38.0,
+        "htsus_rate": "2.7%",
+        "duty_amount": 1.03
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 0.13
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.05
+        }
+      ]
+    },
+    {
+      "line_no": "013",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY | ARTICLE OF CHINA,US NTE 20(R)",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 18.7
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 18.7
+        },
+        {
+          "htsus": "9903.88.15",
+          "steel_weight_kg": null,
+          "rate": "7.5%",
+          "amount": 14.03
+        }
+      ],
+      "commodity": {
+        "description": "OVENS ETC USED IN RESTAURANTS",
+        "htsus": "8419.81.9040",
+        "gross_weight_kg": 329.0,
+        "net_quantity": 25.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 187.0,
+        "htsus_rate": "FREE",
+        "duty_amount": 0.0
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 0.65
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.23
+        }
+      ]
+    },
+    {
+      "line_no": "014",
+      "line_type": "STANDARD",
+      "manifest_note": null,
+      "exclusion_note": "PRD ANY CTRY,EXC 99030126-0134 | CN/HK EO 10% DUTY",
+      "tariff_subheadings": [
+        {
+          "htsus": "9903.01.25",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 51.8
+        },
+        {
+          "htsus": "9903.01.24",
+          "steel_weight_kg": null,
+          "rate": "10%",
+          "amount": 51.8
+        }
+      ],
+      "commodity": {
+        "description": "ELEC DOM APPLIANCES, OTHER",
+        "htsus": "8509.80.5095",
+        "gross_weight_kg": 913.0,
+        "net_quantity": 216.0,
+        "net_quantity_unit": "NO",
+        "entered_value": 518.0,
+        "htsus_rate": "4.2%",
+        "duty_amount": 21.76
+      },
+      "fees": [
+        {
+          "code": "499",
+          "description": "Merchandise Processing Fee",
+          "rate": "0.3464%",
+          "amount": 1.79
+        },
+        {
+          "code": "501",
+          "description": "Harbor Maintenance Fee",
+          "rate": "0.1250%",
+          "amount": 0.65
+        }
+      ]
+    }
+  ],
+  "line_item_count": 14
+}
