@@ -8,7 +8,6 @@ PDF parsing service for **CBP Form 7501** (U.S. Customs Entry Summary). Consumes
 
 - **RabbitMQ consumer** (`consumer.py`): async task processing with concurrency, reconnection, and error reporting
 - **PDF parser v1** (`parse_7501.py`): extracts header, line items, HTSUS codes, duties, and related fields from common 7501 layouts
-- **PDF parser v2** (`parse_7501_v2.py`): generic parser for varied importer/carrier formats; usable as a standalone CLI tool
 
 ## Project Structure
 
@@ -16,7 +15,6 @@ PDF parsing service for **CBP Form 7501** (U.S. Customs Entry Summary). Consumes
 cbp7501-consumer/
 ├── consumer.py          # RabbitMQ consumer entry point
 ├── parse_7501.py        # 7501 PDF parser (v1; used by consumer)
-├── parse_7501_v2.py     # 7501 PDF parser (v2; generic)
 ├── .env.example         # Environment variable template
 ├── files/
 │   ├── input/           # Sample PDFs / JSON for local testing
@@ -79,9 +77,7 @@ python consumer.py
 # v1 parser
 python parse_7501.py files/input/MRKU5394955.pdf files/output/result.json
 
-# v2 parser (generic)
-python parse_7501_v2.py files/input/MRKU5394955.pdf files/output/result_v2.json
-```
+# ```
 
 If no output path is given, results are printed to stdout.
 
@@ -153,7 +149,7 @@ The consumer **ACKs** the original message whether parsing succeeds or fails, pr
 
 - Do not commit `.env` (contains secrets); use `.env.example` as a reference only
 - Sample files under `files/input/` and `files/output/` are for local testing
-- v1 and v2 parsers handle different PDF layouts; try `parse_7501_v2.py` first when encountering a new format
+- The v1 parser handles common PDF layouts; if you encounter a new format, extend or adjust parsing rules locally.
 
 ## License
 

@@ -8,7 +8,6 @@ CBP Form 7501（美国海关进口报关单）PDF 解析服务。从 RabbitMQ �
 
 - **RabbitMQ 消费者**（`consumer.py`）：异步处理解析任务，支持并发、断线重连与错误回传
 - **PDF 解析器 v1**（`parse_7501.py`）：针对常见 7501 版式提取表头、行项目、HTSUS、关税等信息
-- **PDF 解析器 v2**（`parse_7501_v2.py`）：通用版解析器，适配不同进口商/承运人格式，可独立 CLI 使用
 
 ## 项目结构
 
@@ -16,7 +15,6 @@ CBP Form 7501（美国海关进口报关单）PDF 解析服务。从 RabbitMQ �
 cbp7501-consumer/
 ├── consumer.py          # RabbitMQ 消费者入口
 ├── parse_7501.py        # 7501 PDF 解析器（v1，consumer 默认使用）
-├── parse_7501_v2.py     # 7501 PDF 解析器（v2，通用版）
 ├── .env.example         # 环境变量示例
 ├── files/
 │   ├── input/           # 本地测试用 PDF / JSON 样例
@@ -78,8 +76,7 @@ python consumer.py
 # v1 解析器
 python parse_7501.py files/input/MRKU5394955.pdf files/output/result.json
 
-# v2 解析器（通用版）
-python parse_7501_v2.py files/input/MRKU5394955.pdf files/output/result_v2.json
+```
 ```
 
 未指定输出路径时，结果打印到标准输出。
@@ -152,7 +149,7 @@ INPUT_QUEUE → 下载 PDF → parse_7501.parse() → OUTPUT_QUEUE → ACK
 
 - 请勿将 `.env`（含真实密码）提交到版本库；`.env.example` 仅作参考
 - `files/input/`、`files/output/` 下的样例文件仅供本地测试
-- v1 与 v2 解析器针对 PDF 版式差异做了兼容，若遇新格式可优先尝试 `parse_7501_v2.py`
+- v1 解析器针对常见 PDF 版式做了兼容；如遇不同版式，可在本地调整或扩展解析规则
 
 ## 许可证
 
