@@ -10,3 +10,6 @@ files/.tmp/
 
 # Ignore local files and test data
 files/
+
+# Ignore runtime message logs
+messages.jsonl
