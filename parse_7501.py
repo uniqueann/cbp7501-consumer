@@ -31,6 +31,9 @@ COMMODITY_DESCRIPTIONS: dict[str, str] = {
     "8211.91.5030": "STEAK KNIVES W/HNDL OF RUB/PLA",
     "8419.81.9040": "OVENS ETC USED IN RESTAURANTS",
     "8509.80.5095": "ELEC DOM APPLIANCES, OTHER",
+    "9401.49.0000": "CONVERTBLE SEATS N/GARDN/CAMPG",
+    "9403.20.0048": "HSEHLD FURN,FOLD MAT,STATIONRY",
+    "8302.41.6080": "MOUNTING ETC, OF IRON ETC,NSPF",
 }
 
 # ── Patterns ──────────────────────────────────────────────────────────────────
@@ -90,18 +93,18 @@ _FEE_CODES = {499, 501}
 #   C-1:  9403.60.8093 23,293 KG 379.00 NO $5,959 FREE $0.00
 COMMODITY_V2_RE = re.compile(
     r"^(\d{4}\.\d{2}\.\d{4})"
-    r"\s+([\d,]+)\s+([A-Z]{2,3})"
+    r"\s+([\d,.]+)\s+([A-Z]{2,3})"  # net_quantity (allow comma+dot e.g. 2,016.00 / 290.00)
     r"\s+([\d,]+)"
-    r"\s+(Free|FREE|[\d.]+%)"
-    r"\s+([\d.]+)$"
+    r"\s+(Free|FREE|[\d.]+%)\w*"     # rate (skip OCR noise after %, e.g. "25%n")
+    r"\s+([\d,.]+)$"                 # duty_amount (allow comma)
 )
 COMMODITY_V2_C1_RE = re.compile(
     r"^(\d{4}\.\d{2}\.\d{4})"
     r"\s+([\d,]+)\s+KG"          # gross_weight_kg
-    r"\s+([\d.]+)\s+([A-Z]{2,3})" # net_quantity + unit
+    r"\s+([\d,.]+)\s+([A-Z]{2,3})" # net_quantity + unit (allow comma e.g. 2,016.00)
     r"\s+\$?([\d,]+)"             # entered value
     r"\s+((?:Free|FREE)\w*|[\d.]+%)"
-    r"\s+\$?([\d.]+)$"
+    r"\s+\$?([\d,.]+)$"           # duty_amount (allow comma)
 )
 
 # Tariff subheading (8/9-digit): three formats
@@ -112,29 +115,78 @@ TARIFF_KG_RE = re.compile(
     r"^(\d{4}\.\d{2}\.\d{2,3})"
     r"\s+([\d,]+)\s+KG"         # gross weight (KG)
     r"\s+[\d,]+"                 # entered value (ignored)
-    r"\s+((?:Free|FREE)\w*|[\d.]+%)"
-    r"\s+([\d.]+)$"
+    r"\s+((?:Free|FREE)\w*|[\d.]+%)\w*"  # rate (skip OCR noise after %, e.g. "25%n")
+    r"\s+([\d,.]+)$"             # amount (allow comma)
 )
 TARIFF_NOKG_RE = re.compile(
     r"^(\d{4}\.\d{2}\.\d{2,3})"
-    r"\s+([X\d,]+)"              # qty or X
+    r"\s+([X\d,.]+)"             # qty or X (allow decimal e.g. 0.00)
     r"\s+[\d,]+"                 # entered value (ignored)
-    r"\s+((?:Free|FREE)\w*|[\d.]+%)"
-    r"\s+([\d.]+)$"
+    r"\s+((?:Free|FREE)\w*|[\d.]+%)\w*"  # rate (skip OCR noise after %, e.g. "25%n")
+    r"\s+([\d,.]+)$"             # amount (allow comma)
 )
 TARIFF_V2_C1_RE = re.compile(
     r"^(\d{4}\.\d{2}\.\d{2,3})"
     r"\s+((?:Free|FREE)\w*|[\d.]+%)"   # rate
-    r"\s+\$?([\d.]+)$"                 # amount (optional $ prefix)
+    r"\s+\$?([\d,.]+)$"                 # amount (allow comma, optional $ prefix)
 )
 
 # CHGS / Visa line: "C $1,500"
 CHGS_RE = re.compile(r"^C\s+\$([\d,]+)")
 
+# D-1 tariff subheading (8/9-digit): "9401.71.00 48NO Free 0.00"
+TARIFF_D1_RE = re.compile(
+    r"^(\d{4}\.\d{2}\.\d{2,3})"
+    r"\s+([\d,]+)\s+([A-Z]{2,3})"
+    r"\s+((?:Free|FREE)\w*|[\d.]+%)"
+    r"\s+([\d.]+)$"
+)
+
 # Fee line
 #   B-1: 501 HARBOR MAINTENANCE FEE (HMF)  0.125%  3.29
 #   C-1: 501 - Harbor Maintenance Fee 0.1250% $20.64
 FEE_V2_RE = re.compile(r"^(499|501)\s+(.*?)\s+([\d.]+%)\s+\$?([\d.]+)$")
+
+# ── D-1 Patterns (alternate format with joined qty+unit, different tariff layout) ──
+# Tariff 9903.88.03 style: HTSUS gross_weight manifest_qty entered_value rate amount
+#   9903.88.03 1035 0X 576 25% 144.00
+TARIFF_D1_88_RE = re.compile(
+    r"^(\d{4}\.\d{2}\.\d{2,4})"
+    r"\s+([\d,]+)"                # gross_weight
+    r"\s+(\d+X|[\d,]+)"           # manifest quantity (e.g., "0X")
+    r"\s+([\d,]+)"                # entered_value
+    r"\s+((?:Free|FREE)\w*|[\d.]+%)"
+    r"\s+\$?([\d.]+)$"
+)
+
+# Tariff 9903.03.01 / 9903.82.01 style: HTSUS qty rate amount (no gross weight)
+#   9903.03.01 0X 10% 57.60
+#   9903.82.01 0X Calculated 0.00
+TARIFF_D1_0301_RE = re.compile(
+    r"^(\d{4}\.\d{2}\.\d{2,4})"
+    r"\s+(\d+X|[\d,]+)"           # manifest quantity
+    r"\s+((?:Free|FREE)\w*|Calculated|[\d.]+%)"
+    r"\s+\$?([\d.]+)$"
+)
+
+# D-1 fee: FORMAT_MERCHANDISE_PROCESSING_FEE(499) 0.3464% 2.00
+FEE_D1_RE = re.compile(
+    r"^([A-Z_]+)\((\d{3})\)\s+([\d.]+%)\s+\$?([\d.]+)$"
+)
+FEE_D1_NAME_MAP: dict[str, str] = {
+    "FORMAL_MERCHANDISE_PROCESSING_FEE": "Merchandise Processing Fee",
+    "HARBOR_MAINTENANCE_FEE":            "Harbor Maintenance Fee (HMF)",
+}
+
+# D-1 commodity: HTSUS qty+unit rate amount (qty and unit joined without space)
+#   9401.49.0000 48NO Free 0.00
+#   8302.41.6080 5456KG 3.9% 46.92
+COMMODITY_D1_RE = re.compile(
+    r"^(\d{4}\.\d{2}\.\d{4})"
+    r"\s+([\d,]+)(NO|KG)"         # net qty + unit (no space)
+    r"\s+((?:Free|FREE)\w*|[\d.]+%)"
+    r"\s+([\d.]+)$"
+)
 
 _SKIP_LINES = {"N", "ENTRY SUMMARY CONTINUATION SHEET", "1.Filer Code/Entry Number"}
 _SKIP_PREFIXES = (
@@ -708,24 +760,32 @@ def _parse_header_v2(all_lines, pdf_path):
         return m.group(1).strip() if m else default
 
     # ── Fields 1-7 ────────────────────────────────────────────────────────────
-    # 兼容两种格式:
+    # 兼容三种格式:
     #   C-1: 8S2-0237708-9 01 ABI/P 04/24/26 036 8 2704 04/19/26
     #   B-1: 9H3-0051130-4 01 036 8 2704
+    #   D-1: INL-12037930 01 ABI/P 06/09/2026  (split: next line 036 8 3002 05/28/2026)
+    # D-1 / E-1 split format: filer/type/summary on one line, surety/bond/port/date on next
+    # E-1: "ENTRY SUMMARY INL-12043045 11 ABI/P" (no summary_date, no entry_date)
     hdr7 = re.search(
-        r"([\w]+-\d{5,}-\d)\s+(\d{2})\s+ABI/\w\s+(\d{2}/\d{2}/\d{2,4})\s+(\d{3})\s+(\d)\s+(\d{4})\s+(\d{2}/\d{2}/\d{2,4})",
+        r"(?:ENTRY\s+SUMMARY\s+)?"  # E-1 prefix
+        r"([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+ABI/\w"
+        r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?\s*"    # summary_date optional
+        r"\n(?:[^\n]*\n)?"                       # optionally skip label line
+        r"\s*(\d{3})\s+(\d)\s+(\d{4})"
+        r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?",       # entry_date optional
         text
     )
     if hdr7:
         filer_entry  = hdr7.group(1)
         entry_type   = hdr7.group(2)
-        summary_date = _fix_year(hdr7.group(3))
+        summary_date = _fix_year(hdr7.group(3) or "")
         surety       = hdr7.group(4)
         bond_type    = hdr7.group(5)
         port_code    = hdr7.group(6)
-        entry_date   = _fix_year(hdr7.group(7))
+        entry_date   = _fix_year(hdr7.group(7) or "")
     else:
         hdr7 = re.search(
-            r"([\w]+-\d{5,}-\d)\s+(\d{2})\s+(\d{3})\s+(\d)\s+(\d{4})"
+            r"([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+(\d{3})\s+(\d)\s+(\d{4})"
             r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?",
             text
         )
@@ -750,14 +810,30 @@ def _parse_header_v2(all_lines, pdf_path):
     import_date       = _fix_year(cl.group(4)) if cl else ""
 
     # ── Fields 12-15 ──────────────────────────────────────────────────────────
-    bl = re.search(
-        r"12\.\s*B/L or AWB Number[^\n]*\n([^\n]+?)\s+(\S+)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{2,4})",
+    # 4-field: BL manufacturer_id country date (C-1: CMDU GGZ2832805 CNGUAMAR4021ZHO CN 01/22/26)
+    # 3-field: BL country date (D-1: CNHUAHON117HUA CN 05/06/2026, no manufacturer ID)
+    bl_4f = re.search(
+        r"12\.\s*B/L or AWB No[^\n]*\n([^\n]+?)\s+(\S+)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{2,4})",
         text, re.S
     )
-    bl_number         = bl.group(1).strip() if bl else ""
-    manufacturer_id   = bl.group(2)         if bl else ""
-    exporting_country = bl.group(3)         if bl else ""
-    export_date       = _fix_year(bl.group(4)) if bl else ""
+    if bl_4f:
+        bl_number         = bl_4f.group(1).strip()
+        manufacturer_id   = bl_4f.group(2)
+        exporting_country = bl_4f.group(3)
+        export_date       = _fix_year(bl_4f.group(4))
+    else:
+        # D-1: 3 fields (no manufacturer ID)
+        bl_3f = re.search(
+            r"12\.\s*B/L or AWB No[^\n]*\n([^\n]+?)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{4})",
+            text, re.S
+        )
+        if bl_3f:
+            bl_number         = bl_3f.group(1).strip()
+            manufacturer_id   = ""
+            exporting_country = bl_3f.group(2)
+            export_date       = _fix_year(bl_3f.group(3))
+        else:
+            bl_number = manufacturer_id = exporting_country = export_date = ""
 
     # ── Fields 19-20 ──────────────────────────────────────────────────────────
     ports = re.search(
@@ -804,42 +880,61 @@ def _parse_header_v2(all_lines, pdf_path):
 
     # ── Manifest Quantity ─────────────────────────────────────────────────────
     manifest_qty = _find(r"\b(\d{3,}\s+CTN?S?)\b")
+    if not manifest_qty:
+        manifest_qty = _find(r"\b(\d{3,}\s+PCS)\b")
 
     # ── Totals ────────────────────────────────────────────────────────────────
     # Entered value
     # B-1: $8,911.00  A.LIQ
     # C-1: Invoice Value +/- MMV Exchange Entered Value\nSGN2602APFV304062 5,959.00 USD
+    # D-1: "Ent Value : $8317" or "501 10.39 $ 8317" line
     entered_value = _money(_find(r"\$([\d,]+\.\d{2})\s+A\.LIQ"))
     if not entered_value:
         ev_m = re.search(r"Invoice Value[^\n]*\n\S+\s+([\d,]+\.\d+)\s+USD", text)
         entered_value = _money(ev_m.group(1)) if ev_m else None
+    if not entered_value:
+        ev_m = re.search(r"Ent Value\s*:\s*\$([\d,]+)", text)
+        entered_value = _money(ev_m.group(1)) if ev_m else None
+    if not entered_value:
+        # D-1: "501 10.39 $ 8317" — entered value follows fee amounts
+        ev_m = re.search(r"501\s+[\d.]+\s+\$\s*([\d,]+)", text)
+        entered_value = _money(ev_m.group(1)) if ev_m else None
 
-    # Duty (field 41)
+    # Duty
     # B-1: Total Other Fees 891.10
     # C-1: "41. Duty\n501 - HMF $7.45 $ 5,959\n$595.90"
+    # D-1: "37.Duty\n...\n3035.56" (different field number)
     duty_m = re.search(r"Total Other Fees\s+([\d,]+(?:\.\d{2})?)", text)
     if not duty_m:
         duty_m = re.search(r"41\.\s*Duty\s*\n[^\n]*\n\$([\d,]+\.\d{2})", text)
+    if not duty_m:
+        duty_m = re.search(r"37\.\s*Duty(?:.|\n)*?\n\s*([\d,]+\.[\d]{2})", text)
     duty = _money(duty_m.group(1)) if duty_m else None
 
-    # Tax (field 42)
+    # Tax (field 42 / 38)
     # B-1: "REASON CODE\n$11.14  0.00"  -- 0.00 is Tax
     # C-1: "42. Tax\n$ 41.03"
     tax_m = re.search(r"REASON CODE[^\n]*\n\$[\d.]+\s+([\d.]+)", text)
     if not tax_m:
         tax_m = re.search(r"42\.\s*Tax[^\n]*\n\$?\s*([\d]+\.[\d]{2})", text)
+    if not tax_m:
+        tax_m = re.search(r"38\.\s*Tax(?:.|\n)*?\n\$?\s*([\d]+\.[\d]{2})", text)
     tax = _money(tax_m.group(1)) if tax_m else None
 
-    # Other fees (field 43)
+    # Other fees (field 43 / 39)
     # B-1: 43.Other\n[extra]\n11.14
     # C-1: 43. Other\n[declaration header]\nAuthorized Agent $41.03
     other_fees_m = re.search(r"43\.\s*Other\s*\n(?:[^\n]*\n)?[^\n]*\$([\d]+\.[\d]{2})", text)
+    if not other_fees_m:
+        other_fees_m = re.search(r"39\.\s*Other(?:.|\n)*?\n[^\n]*\$?\s*([\d]+\.[\d]{2})", text)
     other_fees = _money(other_fees_m.group(1)) if other_fees_m else None
 
-    # Grand total (field 44)
+    # Grand total (field 44 / 40)
     # B-1: 44.Total\n[purchaser line] 902.24
     # C-1: 44. Total\nI declare... $636.93
     grand_total_m = re.search(r"44\.\s*Total\s*\n[^\n]*\$([\d,]+\.[\d]{2})", text)
+    if not grand_total_m:
+        grand_total_m = re.search(r"40\.\s*Total(?:.|\n)*?\n.*?\$?([\d,]+\.[\d]{2})", text)
     grand_total = _money(grand_total_m.group(1)) if grand_total_m else None
 
     # HMF / MPF
@@ -847,6 +942,11 @@ def _parse_header_v2(all_lines, pdf_path):
     # C-1: "Harbor Maintenance Fee 0.1250% $7.45"
     hmf = _money(_find(r"Harbor Maintenance Fee\s+(?:[\d.]+%\s+)?\$([\d.]+)"))
     mpf = _money(_find(r"Merchandise Processing Fee\s+(?:[\d.]+%\s+)?\$([\d.]+)"))
+    # D-1: "HARBOR_MAINTENANCE_FEE(501) 0.125% 0.72"
+    if not hmf:
+        hmf = _money(_find(r"HARBOR_MAINTENANCE_FEE\(501\)\s+[\d.]+%\s+\$?([\d.]+)"))
+    if not mpf:
+        mpf = _money(_find(r"FORMAL_MERCHANDISE_PROCESSING_FEE\(499\)\s+[\d.]+%\s+\$?([\d.]+)"))
 
     return {
         "form":                    "CBP 7501",
@@ -901,9 +1001,24 @@ def _split_blocks_v2(all_lines):
     """Group lines into per-line-item blocks; 499/501 absorbed into preceding block."""
     start_idx = 0
     for i, line in enumerate(all_lines):
-        if "MASTER BILL" in line or "I.T. DATE" in line:
+        if "MASTER BILL" in line or "I.T. DATE" in line or "I.T. Date" in line or "--MBL--" in line:
             start_idx = i + 1
             break
+
+    # Address-like lines to skip (street numbers that look like 3-digit line items)
+    _ADDRESS_RE = re.compile(
+        r"^(0\d{2}|[1-9]\d{2})\s+"
+        r"(Terry|Avenue|Street|Road|Drive|Blvd|Lane|Way|North|South|East|West|"
+        r"Seattle|City|State|Zip|Fulfillment|FONTANA|LOUISVILLE|MORENO|"
+        r"\d+\s+(Terry|Avenue|Street|Road|Drive|Blvd|Lane|Way))",
+        re.I
+    )
+    # Street address fragments that appear on blocks after address lines
+    _ADDRESS_FRAG = re.compile(
+        r"^(Terry|Avenue|Street|Road|Drive|Blvd|Lane|Way|North|South|East|West|"
+        r"Seattle|City|State)\s+",
+        re.I
+    )
 
     blocks = []
     i = start_idx
@@ -915,6 +1030,10 @@ def _split_blocks_v2(all_lines):
             if re.match(r'^\d{3,}\s+CT', line):
                 i += 1
                 continue
+            # 跳过地址行 (如 "410 Terry Avenue North")
+            if _ADDRESS_RE.match(line):
+                i += 1
+                continue
             j = i + 1
             while j < len(all_lines):
                 nxt = all_lines[j].strip()
@@ -922,6 +1041,10 @@ def _split_blocks_v2(all_lines):
                 if nm and int(nm.group(1)) not in _FEE_CODES:
                     # 同样跳过 manifest 行
                     if re.match(r'^\d{3,}\s+CT', nxt):
+                        j += 1
+                        continue
+                    # 同样跳过地址行
+                    if _ADDRESS_RE.match(nxt):
                         j += 1
                         continue
                     break
@@ -966,6 +1089,33 @@ def _parse_block_v2(lines):
         if re.match(r"^C\d{3,}$", line):   # C739, C887 codes
             continue
 
+        # D-1: skip "Invoice XXX" lines, "Not Related", BL/HBL lines, annotation lines
+        if re.match(r"^Invoice\s+\d{3}", line):
+            continue
+        if line.strip() == "Not Related":
+            continue
+        # D-1 BL/HBL line: "CNHUAHON117HUA C139"
+        if re.match(r"^[A-Z]{2,4}[A-Z0-9]{8,}\s+C\d{2,4}$", line):
+            entry["hbl_number"] = line.split()[0]
+            continue
+        # D-1 PN# line: "PN# lounge chair"
+        if re.match(r"^PN#\s+", line, re.I):
+            entry["product_name"] = re.sub(r"^PN#\s+", "", line, flags=re.I)
+            continue
+
+        # D-1 fee: FORMAT_MERCHANDISE_PROCESSING_FEE(499) 0.3464% 2.00
+        fd = FEE_D1_RE.match(line)
+        if fd:
+            code = fd.group(2)
+            name = FEE_D1_NAME_MAP.get(fd.group(1), fd.group(1))
+            entry["fees"].append({
+                "code":        code,
+                "description": name,
+                "rate":        fd.group(3),
+                "amount":      _money(fd.group(4)),
+            })
+            continue
+
         # Fee line
         fm = FEE_V2_RE.match(line)
         if fm:
@@ -981,6 +1131,28 @@ def _parse_block_v2(lines):
         chgs_m = CHGS_RE.match(line)
         if chgs_m:
             entry["commodity"]["entered_value_chgs"] = _money(chgs_m.group(1))
+            continue
+
+        # D-1 commodity: HTSUS qty+unit rate amount (e.g. "9401.49.0000 48NO Free 0.00")
+        cd = COMMODITY_D1_RE.match(line)
+        if cd:
+            htsus = cd.group(1)
+            gross_kg = None
+            if cd.group(3) == "KG":
+                gross_kg = _money(cd.group(2))
+                net_qty = _money(cd.group(2))
+            else:
+                net_qty = _money(cd.group(2))
+            entry["commodity"] = {
+                "description":       commodity_desc_candidate or COMMODITY_DESCRIPTIONS.get(htsus, ""),
+                "htsus":             htsus,
+                "gross_weight_kg":   gross_kg,
+                "net_quantity":      net_qty,
+                "net_quantity_unit": cd.group(3),
+                "entered_value":     None,
+                "htsus_rate":        cd.group(4),
+                "duty_amount":       _money(cd.group(5)),
+            }
             continue
 
         # Main HTSUS commodity (10-digit)
@@ -1013,6 +1185,39 @@ def _parse_block_v2(lines):
                 "htsus_rate":        cm.group(5),
                 "duty_amount":       _money(cm.group(6)),
             }
+            continue
+
+        # D-1 / E-1 tariff subheading with gross weight + manifest qty
+        #   E-1: "9903.03.01 878 0X 1154 10% 115.40"
+        #   D-1: "9903.88.03 1035 0X 576 25% 144.00"
+        td88 = TARIFF_D1_88_RE.match(line)
+        if td88:
+            entry["tariff_subheadings"].append({
+                "htsus":           td88.group(1),
+                "steel_weight_kg": _money(td88.group(2)),
+                "rate":            td88.group(5),
+                "amount":          _money(td88.group(6)),
+            })
+            continue
+
+        # D-1 tariff subheading (8/9-digit): e.g. "9401.71.00 48NO Free 0.00"
+        td = TARIFF_D1_RE.match(line)
+        if td:
+            qty_val = td.group(3)
+            qty_num = _money(td.group(2))
+            unit = td.group(3)
+            rate_raw = td.group(4)
+            rate = "Free" if rate_raw.upper().startswith("FREE") else rate_raw
+            entry["tariff_subheadings"].append({
+                "htsus":           td.group(1),
+                "steel_weight_kg": qty_num if unit == "KG" else None,
+                "rate":            rate,
+                "amount":          _money(td.group(5)),
+            })
+            continue
+
+        # D-1: skip "DOES NOT CONT..." / "ARTICLE OF CHINA..." / "NTE" annotation lines
+        if re.match(r"^(DOES NOT CONT|ARTICLE OF|NTE\s)", line):
             continue
 
         # Tariff subheading (8/9-digit) — try C-1 first, then KG, then No-KG
@@ -1059,6 +1264,12 @@ def _parse_block_v2(lines):
         if re.match(r"^[A-Z][A-Z0-9,/\s\-\.]+$", line) and len(line) > 4:
             commodity_desc_candidate = line
             continue
+
+    # Skip phantom blocks: 3-digit line_no with fees but no commodity/tariff data
+    # (e.g. "669 C $3,500" from CBP USE ONLY TOTALS section)
+    if (entry["line_no"].isdigit() and int(entry["line_no"]) >= 100
+        and not entry["commodity"] and not entry["tariff_subheadings"]):
+        return None
 
     return entry
 
