@@ -7,3 +7,6 @@ __pycache__/
 venv/
 tool-results/
 files/.tmp/
+
+# Ignore local files and test data
+files/
