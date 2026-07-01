@@ -478,8 +478,11 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
     # ── location / reference
     location_m  = re.search(r"(Y\d+\s+Voyage:\s+\S+)", text)
     location    = location_m.group(1) if location_m else ""
-    ref_m       = re.search(r"Customer Reference #\s*(\S+)", text)
-    reference   = ref_m.group(1) if ref_m else ""
+    # Customer Reference # 属于 consignee 地址块，映射到 consignee.customer_reference
+    ref_m         = re.search(r"Customer Reference #\s*(\S+)", text)
+    customer_ref  = ref_m.group(1) if ref_m else ""
+    # field 24 Reference Number 通常为空（A-1 该字段无数据）
+    reference     = ""
 
     # ── manifest quantity
     manifest_m  = re.search(r"([\d,]+\s+CTN)", text)
@@ -625,6 +628,7 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
             "city":   consignee_city,
             "state":  consignee_state,
             "zip":    consignee_zip,
+            "customer_reference": customer_ref,
         },
         "importer_of_record": {
             "name":    importer_name,
@@ -770,7 +774,7 @@ def _parse_header_v2(all_lines, pdf_path):
         r"(?:ENTRY\s+SUMMARY\s+)?"  # E-1 prefix
         r"([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+ABI/\w"
         r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?\s*"    # summary_date optional
-        r"\n(?:[^\n]*\n)?"                       # optionally skip label line
+        r"(?:\n(?:[^\n]*\n)?)?"                   # optionally skip label line (may be single-line)
         r"\s*(\d{3})\s+(\d)\s+(\d{4})"
         r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?",       # entry_date optional
         text
@@ -784,20 +788,58 @@ def _parse_header_v2(all_lines, pdf_path):
         port_code    = hdr7.group(6)
         entry_date   = _fix_year(hdr7.group(7) or "")
     else:
+        # C-1 single-line: 8S2-0244691-8 01 ABI/P 06/11/26 054 8 2704 06/04/26
         hdr7 = re.search(
-            r"([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+(\d{3})\s+(\d)\s+(\d{4})"
+            r"([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+ABI/\w"
+            r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?\s*"
+            r"(\d{3})\s+(\d)\s+(\d{4})"
             r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?",
             text
         )
-        filer_entry  = hdr7.group(1) if hdr7 else ""
-        entry_type   = hdr7.group(2) if hdr7 else ""
-        surety       = hdr7.group(3) if hdr7 else ""
-        bond_type    = hdr7.group(4) if hdr7 else ""
-        port_code    = hdr7.group(5) if hdr7 else ""
-        entry_date   = _fix_year(hdr7.group(6)) if hdr7 and hdr7.group(6) else ""
-        summary_date = _fix_year(
-            _find(r"(\d{2}/\d{2}/\d{2,4})\s+\d{3}\s+\d\s+\d{4}")
-        )
+        if hdr7:
+            filer_entry  = hdr7.group(1)
+            entry_type   = hdr7.group(2)
+            summary_date = _fix_year(hdr7.group(3) or "")
+            surety       = hdr7.group(4)
+            bond_type    = hdr7.group(5)
+            port_code    = hdr7.group(6)
+            entry_date   = _fix_year(hdr7.group(7) or "")
+        else:
+            # B-1: 9H3-0051130-4 01 036 8 2704 (no ABI/P, no summary_date)
+            hdr7 = re.search(
+                r"([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+(\d{3})\s+(\d)\s+(\d{4})"
+                r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?",
+                text
+            )
+            if hdr7:
+                filer_entry  = hdr7.group(1)
+                entry_type   = hdr7.group(2)
+                surety       = hdr7.group(3)
+                bond_type    = hdr7.group(4)
+                port_code    = hdr7.group(5)
+                entry_date   = _fix_year(hdr7.group(6)) if hdr7.group(6) else ""
+                summary_date = _fix_year(
+                    _find(r"(\d{2}/\d{2}/\d{2,4})\s+\d{3}\s+\d\s+\d{4}")
+                )
+            else:
+                # H-1: filer code 为空，数据行直接以 entry_type 开头
+                #   "01 ABI/A 05/28/26 054 8 2704 05/17/26"
+                # 锚定在字段 1-7 标签行之后
+                hdr7 = re.search(
+                    r"7\.\s*Entry Date[^\n]*\n"
+                    r"\s*(\d{2})\s+ABI/\w"
+                    r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?\s+"
+                    r"(\d{3})\s+(\d)\s+(\d{4})"
+                    r"(?:\s+(\d{2}/\d{2}/\d{2,4}))?",
+                    text
+                )
+                filer_entry  = ""
+                entry_type   = hdr7.group(1) if hdr7 else ""
+                summary_date = _fix_year(hdr7.group(2) or "") if hdr7 else ""
+                surety       = hdr7.group(3) if hdr7 else ""
+                bond_type    = hdr7.group(4) if hdr7 else ""
+                port_code    = hdr7.group(5) if hdr7 else ""
+                entry_date   = _fix_year(hdr7.group(6)) if hdr7 and hdr7.group(6) else ""
 
     # ── Fields 8-11 ───────────────────────────────────────────────────────────
     # 兼容: "8.Importing Carrier" 和 "8. Importing Carrier"
@@ -813,7 +855,7 @@ def _parse_header_v2(all_lines, pdf_path):
     # 4-field: BL manufacturer_id country date (C-1: CMDU GGZ2832805 CNGUAMAR4021ZHO CN 01/22/26)
     # 3-field: BL country date (D-1: CNHUAHON117HUA CN 05/06/2026, no manufacturer ID)
     bl_4f = re.search(
-        r"12\.\s*B/L or AWB No[^\n]*\n([^\n]+?)\s+(\S+)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{2,4})",
+        r"12\.\s*B/L or AWB N(?:o|umber)[^\n]*\n([^\n]+?)\s+(\S+)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{2,4})",
         text, re.S
     )
     if bl_4f:
@@ -824,7 +866,7 @@ def _parse_header_v2(all_lines, pdf_path):
     else:
         # D-1: 3 fields (no manufacturer ID)
         bl_3f = re.search(
-            r"12\.\s*B/L or AWB No[^\n]*\n([^\n]+?)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{4})",
+            r"12\.\s*B/L or AWB N(?:o|umber)[^\n]*\n([^\n]+?)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{4})",
             text, re.S
         )
         if bl_3f:
@@ -878,6 +920,10 @@ def _parse_header_v2(all_lines, pdf_path):
     importer_state  = city_m.group(5) or ""   if city_m else ""
     importer_zip    = city_m.group(6)         if city_m else ""
 
+    # ── Customer Reference ──────────────────────────────────────────────────────
+    # 提取 Consignee 的 Customer Reference（如 "Destination: CA Customer Reference # CAAU8232594"）
+    customer_ref = _find(r"Customer Reference\s*#\s*(\S+)")
+
     # ── Manifest Quantity ─────────────────────────────────────────────────────
     manifest_qty = _find(r"\b(\d{3,}\s+CTN?S?)\b")
     if not manifest_qty:
@@ -888,7 +934,7 @@ def _parse_header_v2(all_lines, pdf_path):
     # B-1: $8,911.00  A.LIQ
     # C-1: Invoice Value +/- MMV Exchange Entered Value\nSGN2602APFV304062 5,959.00 USD
     # D-1: "Ent Value : $8317" or "501 10.39 $ 8317" line
-    entered_value = _money(_find(r"\$([\d,]+\.\d{2})\s+A\.LIQ"))
+    entered_value = _money(_find(r"\$([\d,]+\.\d{2})[ \t]+A\.LIQ"))
     if not entered_value:
         ev_m = re.search(r"Invoice Value[^\n]*\n\S+\s+([\d,]+\.\d+)\s+USD", text)
         entered_value = _money(ev_m.group(1)) if ev_m else None
@@ -970,11 +1016,12 @@ def _parse_header_v2(all_lines, pdf_path):
         "reference_number":        reference_number,
         "manifest_quantity":       manifest_qty,
         "consignee": {
-            "name":   consignee_name,
-            "street": consignee_street,
-            "city":   consignee_city,
-            "state":  consignee_state,
-            "zip":    consignee_zip,
+            "name":    consignee_name,
+            "street":  consignee_street,
+            "city":    consignee_city,
+            "state":   consignee_state,
+            "zip":     consignee_zip,
+            "customer_reference": customer_ref,
         },
         "importer_of_record": {
             "name":    importer_name,
