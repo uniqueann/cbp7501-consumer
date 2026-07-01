@@ -432,11 +432,11 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
         text
     )
     entry_type    = row5_m.group(2)  if row5_m else ""
-    summary_date  = row5_m.group(3)  if row5_m else ""
+    summary_date  = _fix_year(row5_m.group(3)) if row5_m else ""
     surety_number = row5_m.group(4)  if row5_m else ""
     bond_type     = row5_m.group(5)  if row5_m else ""
     port_code     = row5_m.group(6)  if row5_m else ""
-    entry_date    = row5_m.group(7)  if row5_m else ""
+    entry_date    = _fix_year(row5_m.group(7)) if row5_m else ""
 
     # ── 行7：<carrier> <mode> <country_of_origin> <import_date>
     # 格式：NESTOS 11 VN 12/09/25  或  CMA CGM FORT DIAMANT 11 CN 02/14/26
@@ -446,7 +446,7 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
     )
     importing_carrier  = row7_m.group(1) if row7_m else ""
     country_of_origin  = row7_m.group(3) if row7_m else ""
-    import_date        = row7_m.group(4) if row7_m else ""
+    import_date        = _fix_year(row7_m.group(4)) if row7_m else ""
 
     # ── 行9：<bl_number> <manufacturer_id> <exporting_country> <export_date>
     # 格式A：CMDU GGZ2832805 CNGUAMAR4021ZHO CN 01/22/26
@@ -461,14 +461,14 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
         bl_number         = row9_m.group(1).strip()
         manufacturer_id   = row9_m.group(2)
         exporting_country = row9_m.group(3)
-        export_date       = row9_m.group(4)
+        export_date       = _fix_year(row9_m.group(4))
     else:
         # 精确匹配：找紧跟 "13. Manufacturer ID" 标签行的下一数据行
         bl_m = re.search(r"13\..*?\n(.+?)\s+(\S+)\s+([A-Z]{2})\s+(\d{2}/\d{2}/\d{2})", text, re.DOTALL)
         bl_number         = bl_m.group(1).strip() if bl_m else ""
         manufacturer_id   = bl_m.group(2)         if bl_m else ""
         exporting_country = bl_m.group(3)         if bl_m else ""
-        export_date       = bl_m.group(4)         if bl_m else ""
+        export_date       = _fix_year(bl_m.group(4)) if bl_m else ""
 
     # ── 行11：57078 2704
     ports_m = re.search(r"^(\d{5})\s+(\d{4})\s*$", text, re.MULTILINE)
@@ -686,11 +686,24 @@ if __name__ == "__main__":
 
 # ── v2 Helpers ─────────────────────────────────────────────────────────────
 def _fix_year(d):
-    """Expand 2-digit year: 03/18/26 -> 03/18/2026."""
+    """Normalize dates to ISO yyyy-MM-dd.
+
+    Accepts MM/DD/YY, MM/DD/YYYY, or already-ISO yyyy-MM-dd.
+    Returns "" for empty input; leaves unrecognized values unchanged.
+    """
     if not d:
         return d
-    m = re.match(r"^(\d{2}/\d{2}/)(\d{2})$", d.strip())
-    return (m.group(1) + "20" + m.group(2)) if m else d.strip()
+    s = d.strip()
+    # Already ISO
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+    m = re.match(r"^(\d{2})/(\d{2})/(\d{2}|\d{4})$", s)
+    if not m:
+        return s
+    mm, dd, yy = m.group(1), m.group(2), m.group(3)
+    if len(yy) == 2:
+        yy = "20" + yy
+    return f"{yy}-{mm}-{dd}"
 
 
 def _extract_text_lines(pdf_path):
