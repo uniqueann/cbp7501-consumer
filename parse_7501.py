@@ -98,6 +98,17 @@ COMMODITY_V2_RE = re.compile(
     r"\s+(Free|FREE|[\d.]+%)\w*"     # rate (skip OCR noise after %, e.g. "25%n")
     r"\s+([\d,.]+)$"                 # duty_amount (allow comma)
 )
+# MRSU variant: net_quantity 为占位符 X，无 unit（unit 在下一行）
+#   "9403.99.9061 X 2 Free 0.00"  -> htsus, X, entered_value, rate, duty
+# MRSU: net_quantity is placeholder "X", no unit on same line (unit on next line)
+#   "9403.99.9061 X 2 Free 0.00"
+COMMODITY_V2_X_RE = re.compile(
+    r"^(\d{4}\.\d{2}\.\d{4})"
+    r"\s+X"                          # net_quantity placeholder
+    r"\s+([\d,]+)"                   # entered value
+    r"\s+(Free|FREE|[\d.]+%)\w*"     # rate
+    r"\s+([\d,.]+)$"                 # duty_amount
+)
 COMMODITY_V2_C1_RE = re.compile(
     r"^(\d{4}\.\d{2}\.\d{4})"
     r"\s+([\d,]+)\s+KG"          # gross_weight_kg
@@ -854,6 +865,23 @@ def _parse_header_v2(all_lines, pdf_path):
                 port_code    = hdr7.group(5) if hdr7 else ""
                 entry_date   = _fix_year(hdr7.group(6)) if hdr7 and hdr7.group(6) else ""
 
+                # MRSU 格式：精简 4 字段 "9H3-0056078-0 01 054 8"（无 summary/port/entry date）
+                if not hdr7:
+                    hdr7 = re.search(
+                        r"7\.\s*Entry Date[^\n]*\n"
+                        r"\s*([\w]+-\d{5,}(?:-\d)?)\s+(\d{2})\s+(\d{3})\s+(\d)",
+                        text
+                    )
+                    if hdr7:
+                        filer_entry  = hdr7.group(1)
+                        entry_type   = hdr7.group(2)
+                        surety       = hdr7.group(3)
+                        bond_type    = hdr7.group(4)
+                        # port_code、summary_date、entry_date 从其他字段推导（后续补充）
+                        port_code    = ""
+                        summary_date = ""
+                        entry_date   = ""
+
     # ── Fields 8-11 ───────────────────────────────────────────────────────────
     # 兼容: "8.Importing Carrier" 和 "8. Importing Carrier"
     cl = re.search(
@@ -888,7 +916,19 @@ def _parse_header_v2(all_lines, pdf_path):
             exporting_country = bl_3f.group(2)
             export_date       = _fix_year(bl_3f.group(3))
         else:
-            bl_number = manufacturer_id = exporting_country = export_date = ""
+            # MRSU: BL manufacturer_id country (no export_date)
+            #   "MAEU270212301 CNHUIXINHUI CN"
+            bl_3f_ned = re.search(
+                r"12\.\s*B/L or AWB N(?:o|umber)[^\n]*\n([^\n]+?)\s+(\S+)\s+([A-Z]{2})\s*$",
+                text, re.S | re.M
+            )
+            if bl_3f_ned:
+                bl_number         = bl_3f_ned.group(1).strip()
+                manufacturer_id   = bl_3f_ned.group(2)
+                exporting_country = bl_3f_ned.group(3)
+                export_date       = ""
+            else:
+                bl_number = manufacturer_id = exporting_country = export_date = ""
 
     # ── Fields 19-20 ──────────────────────────────────────────────────────────
     ports = re.search(
@@ -897,6 +937,10 @@ def _parse_header_v2(all_lines, pdf_path):
     )
     foreign_port = ports.group(1) if ports else ""
     us_port      = ports.group(2) if ports else ""
+
+    # 如果 port_code 仍为空（MRSU 格式），使用 us_port 作为 port_code
+    if not port_code and us_port:
+        port_code = us_port
 
     # ── Fields 26-28 ──────────────────────────────────────────────────────────
     # 兼容: "26.Consignee Number" 和 "26. Consignee Number"
@@ -1247,6 +1291,23 @@ def _parse_block_v2(lines):
             }
             continue
 
+        # MRSU commodity with X placeholder (unit on next line)
+        #   "9403.99.9061 X 2 Free 0.00"
+        cm_x = COMMODITY_V2_X_RE.match(line)
+        if cm_x:
+            htsus = cm_x.group(1)
+            entry["commodity"] = {
+                "description":       commodity_desc_candidate or COMMODITY_DESCRIPTIONS.get(htsus, ""),
+                "htsus":             htsus,
+                "gross_weight_kg":   None,
+                "net_quantity":      None,  # X placeholder, actual value unknown
+                "net_quantity_unit": "",    # will parse from next line if present
+                "entered_value":     _money(cm_x.group(2)),
+                "htsus_rate":        cm_x.group(3),
+                "duty_amount":       _money(cm_x.group(4)),
+            }
+            continue
+
         # D-1 / E-1 tariff subheading with gross weight + manifest qty
         #   E-1: "9903.03.01 878 0X 1154 10% 115.40"
         #   D-1: "9903.88.03 1035 0X 576 25% 144.00"
@@ -1318,6 +1379,14 @@ def _parse_block_v2(lines):
             continue
 
         if re.match(r"^SECTION\s+", line):
+            continue
+
+        # Standalone quantity line (e.g. "10 NO", "20 NO") — backfill net_quantity
+        # when commodity qty was a placeholder "X" (MRSU format)
+        qty_m = re.match(r"^([\d,]+)\s+(NO|PCS|PR|DOZ|KG|SET|EA)$", line)
+        if qty_m and entry["commodity"] and entry["commodity"].get("net_quantity") is None:
+            entry["commodity"]["net_quantity"]      = _money(qty_m.group(1))
+            entry["commodity"]["net_quantity_unit"] = qty_m.group(2)
             continue
 
         # Commodity label rows (e.g. "OTH, WOOD, FURNITRE, PRTS, OTH")
