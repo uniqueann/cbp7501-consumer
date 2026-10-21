@@ -659,42 +659,6 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
     }
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def parse(pdf_path: str) -> dict:
-    """Parse a CBP 7501 PDF and return structured data as a dict."""
-    all_lines  = _extract_text(pdf_path)
-    # 传入第一页词坐标，用于精确切分 consignee/importer name
-    _page0_words = []
-    with pdfplumber.open(pdf_path) as _pdf:
-        _page0_words = _pdf.pages[0].extract_words(x_tolerance=3, y_tolerance=3)
-    header     = _parse_header(all_lines, _page0_words)
-    blocks     = _split_blocks(all_lines)
-    line_items = [p for b in blocks for p in [_parse_block(b)] if p]
-
-    return {
-        "header":          header,
-        "line_items":      line_items,
-        "line_item_count": len(line_items),
-    }
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <input.pdf> [output.json]", file=sys.stderr)
-        sys.exit(1)
-
-    pdf_path = sys.argv[1]
-    result   = parse(pdf_path)
-
-    if len(sys.argv) >= 3:
-        out_path = sys.argv[2]
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-        print(f"Saved → {out_path}")
-    else:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-
-
 # ── v2 Helpers ─────────────────────────────────────────────────────────────
 def _fix_year(d):
     """Normalize dates to ISO yyyy-MM-dd.
@@ -1033,9 +997,10 @@ def _parse_header_v2(all_lines, pdf_path):
     other_fees = _money(other_fees_m.group(1)) if other_fees_m else None
 
     # Grand total (field 44 / 40)
-    # B-1: 44.Total\n[purchaser line] 902.24
-    # C-1: 44. Total\nI declare... $636.93
-    grand_total_m = re.search(r"44\.\s*Total\s*\n[^\n]*\$([\d,]+\.[\d]{2})", text)
+    # B-1: 44.Total\n[purchaser line] 902.24 (金额在下一行行尾)
+    # C-1: 44. Total\nI declare... $636.93 (金额在下一行)
+    # H-1: 44.Total\n[declare line]\n$3,716.49 (金额在下面第2行)
+    grand_total_m = re.search(r"44\.\s*Total\s*\n(?:.*?\n){0,2}.*?\$?([\d,]+\.[\d]{2})\s*$", text, re.MULTILINE)
     if not grand_total_m:
         grand_total_m = re.search(r"40\.\s*Total(?:.|\n)*?\n.*?\$?([\d,]+\.[\d]{2})", text)
     grand_total = _money(grand_total_m.group(1)) if grand_total_m else None
@@ -1422,6 +1387,11 @@ def parse(pdf_path: str) -> dict:
         header     = _parse_header_v2(all_lines, pdf_path)
         blocks     = _split_blocks_v2(all_lines)
         line_items = [p for b in blocks for p in [_parse_block_v2(b)] if p]
+
+    # 新判定规则：只要 grand_total_usd 不为 None 就算成功
+    totals = header.get("totals", {})
+    if totals.get("grand_total_usd") is None:
+        raise ValueError("No grand_total_usd could be parsed from the PDF")
 
     return {
         "header":          header,
