@@ -13,3 +13,9 @@ files/
 
 # Ignore runtime message logs
 messages.jsonl
+
+# Local IDE / Cursor settings
+.cursor/
+
+# Temporary skill inspection copies (may contain secrets)
+_skill_inspect_*/

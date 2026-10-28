@@ -221,13 +221,79 @@ def _money(s: str | None) -> float | str | None:
 
 
 def _extract_text(pdf_path: str) -> list[str]:
-    """Return all lines from every page of the PDF."""
-    lines: list[str] = []
+    """Return all lines from every page of the PDF.
+
+    Fallback: some PDFs (e.g. K-1.pdf) have a broken ToUnicode map on some
+    pages, making pdfplumber emit garbled text (repeated letter runs).
+    PyMuPDF reads those correctly, so use it for the whole document when
+    any page's pdfplumber output lacks recognizable form markers.
+    """
+    page_texts: list[str] = []
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
-            text = page.extract_text(x_tolerance=3, y_tolerance=3) or ""
-            lines.extend(text.splitlines())
-    return lines
+            page_texts.append(page.extract_text(x_tolerance=3, y_tolerance=3) or "")
+
+    if all(_has_form_markers(t) for t in page_texts):
+        return [l for t in page_texts for l in t.splitlines()]
+
+    alt = _extract_text_pymupdf(pdf_path)
+    if alt and _has_form_markers("\n".join(alt)):
+        return alt
+
+    return [l for t in page_texts for l in t.splitlines()]
+
+
+# Markers that identify a readable CBP 7501 text layer
+_FORM_MARKERS = ("ENTRY SUMMARY", "Filer Code/Entry Number", "CBP Form 7501")
+
+
+def _has_form_markers(text: str) -> bool:
+    """True if text contains recognizable CBP 7501 form markers."""
+    return sum(1 for m in _FORM_MARKERS if m in text) >= 2
+
+
+def _extract_text_pymupdf(pdf_path: str) -> list[str]:
+    """Extract lines via PyMuPDF, grouping words into rows by y-coordinate."""
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return []
+    out: list[str] = []
+    try:
+        doc = pymupdf.open(pdf_path)
+    except Exception:
+        return []
+    try:
+        for page in doc:
+            out.extend(_pymupdf_rows(page))
+    finally:
+        doc.close()
+    return out
+
+
+def _pymupdf_rows(page) -> list[str]:
+    """Group PyMuPDF words into visual rows by y-coordinate."""
+    words = page.get_text("words")
+    rows: dict[float, list] = {}
+    for w in words:
+        y = round(w[1], 1)
+        key = None
+        for k in rows:
+            if abs(k - y) <= 2.5:
+                key = k
+                break
+        if key is None:
+            key = y
+            rows[key] = []
+        rows[key].append(w)
+    out: list[str] = []
+    for y in sorted(rows):
+        ws = sorted(rows[y], key=lambda w: w[0])
+        out.append(" ".join(w[4] for w in ws))
+    return out
 
 
 # ── Block splitter ────────────────────────────────────────────────────────────
@@ -710,7 +776,7 @@ def _extract_two_col_fields(pdf_path):
                     label_y = w["top"]
                     break
             if label_y is None:
-                return "", "", "", ""
+                return _extract_two_col_fields_pymupdf(pdf_path)
 
             # Collect words in the 3 data rows below the label (name, street, city)
             data_words = [
@@ -738,7 +804,57 @@ def _extract_two_col_fields(pdf_path):
 
             return consignee_name, consignee_street, importer_name, importer_street
     except Exception:
+        return _extract_two_col_fields_pymupdf(pdf_path)
+
+
+def _extract_two_col_fields_pymupdf(pdf_path):
+    """PyMuPDF fallback for the consignee/importer two-column block.
+
+    Used when the pdfplumber text layer is broken (e.g. K-1.pdf).
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return "", "", "", ""
+    try:
+        doc = pymupdf.open(pdf_path)
+        page = doc[0]
+        mid_x = page.rect.width / 2
+        words = page.get_text("words")
+        doc.close()
+    except Exception:
         return "", "", "", ""
+
+    label_y = None
+    for w in words:
+        if w[4].startswith("29.") or "Ultimate" in w[4]:
+            label_y = w[1]
+            break
+    if label_y is None:
+        return "", "", "", ""
+
+    data_words = [w for w in words if label_y + 8 < w[1] < label_y + 60]
+
+    rows: dict[float, list] = {}
+    for w in data_words:
+        ry = round(w[1])
+        rows.setdefault(ry, []).append(w)
+
+    sorted_rows = [ws for _, ws in sorted(rows.items())]
+
+    def join_col(row_words, right_col):
+        side = [w[4] for w in row_words if (w[0] >= mid_x) == right_col]
+        return " ".join(side)
+
+    consignee_name   = join_col(sorted_rows[0], False) if len(sorted_rows) > 0 else ""
+    importer_name    = join_col(sorted_rows[0], True)  if len(sorted_rows) > 0 else ""
+    consignee_street = join_col(sorted_rows[1], False) if len(sorted_rows) > 1 else ""
+    importer_street  = join_col(sorted_rows[1], True)  if len(sorted_rows) > 1 else ""
+
+    return consignee_name, consignee_street, importer_name, importer_street
 
 
 
