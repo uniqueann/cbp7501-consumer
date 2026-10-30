@@ -1,0 +1,65 @@
+Copyright (c) 2026 ainingning <ainingning@aukeys.com>. All rights reserved.
+版权所有 (c) 2026 ainingning <ainingning@aukeys.com>。保留所有权利。
+
+================================================================================
+中文
+================================================================================
+
+本仓库及其全部内容（包括但不限于源代码、文档、配置、数据结构与测试样例）
+均为上述版权持有人的专有财产。
+
+未经版权持有人事先书面许可，任何个人或组织不得以任何形式、出于任何目的
+（无论商业或非商业）实施下列行为：
+
+  1. 使用本软件或其任何部分；
+  2. 复制、下载后留存、镜像或归档本软件；
+  3. 修改、改编、翻译或创作衍生作品；
+  4. 分发、发布、再许可、出售、出租、出借或托管本软件；
+  5. 将本软件或其衍生作品用于任何产品或服务。
+
+本仓库在 GitHub 上公开可见，仅出于展示与协作便利，不构成对上述任何
+权利的许可或放弃。
+
+如需授权，请联系：ainingning@aukeys.com
+
+================================================================================
+English
+================================================================================
+
+This repository and all of its contents (including but not limited to source
+code, documentation, configuration, data structures, and test samples) are the
+proprietary property of the copyright holder named above.
+
+No permission is granted, and no license is implied, to any person or
+organization to do any of the following, in any form and for any purpose
+(whether commercial or non-commercial), without the prior written permission
+of the copyright holder:
+
+  1. use this software or any part of it;
+  2. copy, retain after download, mirror, or archive this software;
+  3. modify, adapt, translate, or create derivative works;
+  4. distribute, publish, sublicense, sell, rent, lend, or host this software;
+  5. incorporate this software or any derivative work into any product or
+     service.
+
+This repository is publicly visible on GitHub for demonstration and
+collaboration convenience only. That visibility does not grant or waive any
+of the rights described above.
+
+To request authorization, contact: ainingning@aukeys.com
+
+================================================================================
+免责声明 / Disclaimer
+================================================================================
+
+本软件按"现状"提供，不附带任何明示或默示的保证，包括但不限于对适销性、
+特定用途适用性及不侵权的保证。在任何情况下，版权持有人均不对因本软件或
+本软件的使用或其他交易而产生的任何索赔、损害或其他责任承担责任，无论是
+在合同诉讼、侵权行为还是其他方面。
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

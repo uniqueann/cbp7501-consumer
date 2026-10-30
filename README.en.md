@@ -153,4 +153,6 @@ The consumer **ACKs** the original message whether parsing succeeds or fails, pr
 
 ## License
 
-No open-source license is specified. Contact the repository maintainer before use.
+This repository is **proprietary software. All rights reserved.** No use, copying, modification, distribution, or sublicensing is permitted without the prior written permission of the copyright holder.
+
+Public visibility on GitHub is for demonstration and collaboration convenience only and does not grant any license. See [LICENSE](LICENSE).
