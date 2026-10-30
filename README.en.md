@@ -31,7 +31,7 @@ cbp7501-consumer/
 ## Installation
 
 ```bash
-pip install pika pdfplumber
+pip install -r requirements.txt
 ```
 
 Copy the environment template and adjust as needed:

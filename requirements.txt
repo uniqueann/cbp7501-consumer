@@ -1,0 +1,21 @@
+# CBP 7501 解析服务依赖
+#
+# 以下版本为本机实测通过的组合，配合 files/input/ 下 18 份回归语料验证。
+# Python 要求 >= 3.10（parse_7501.py 在运行期使用了 PEP 604 的 `X | None` 注解）。
+#
+# 安装：
+#   pip install -r requirements.txt
+
+# RabbitMQ 客户端 —— consumer.py 必需
+pika==1.4.1
+
+# PDF 文本层抽取（主路径）—— 解析器必需
+# 传递依赖：pdfminer.six、Pillow、pypdfium2
+pdfplumber==0.11.9
+
+# PDF 文本层抽取（兜底路径）—— 实际必需，勿删
+# 部分 PDF 的 ToUnicode 映射损坏，pdfplumber 会抽出重复乱码（如 K-1.pdf）；
+# parse_7501.py 的 _extract_text() 检测到表单标记缺失后会改用 PyMuPDF 重抽整篇文本。
+# 代码里虽有 ImportError 兜底，但缺这个包时此类文件会直接解析失败。
+# 注意：发行包名是 PyMuPDF，import 名是 pymupdf（旧版为 fitz）。
+PyMuPDF==1.27.2.3
