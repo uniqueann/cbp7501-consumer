@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """
-CBP Form 7501 — RabbitMQ Consumer
-----------------------------------
+CBP / Canada customs PDF — RabbitMQ Consumer
+---------------------------------------------
 Consumes messages from INPUT_QUEUE, each message is JSON:
-    {"ID": 1, "URL": "https://...7501.pdf?..."}
+    {
+        "ID": 1,
+        "FileNumber": "FN2603200001",
+        "URL": "https://...doc.pdf?...",
+        "CbpFormType": 10
+    }
+
+CbpFormType (optional, default 10):
+    10 — U.S. full container (CBP Form 7501) → parse_7501.parse()
+    20 — Canada full container (CBSA BSF864) → parse_cad.parse()
 
 For each message:
   1. Download the PDF from URL (pre-signed OBS link, no auth header needed)
-  2. Parse it with parse_7501.parse()
-  3. Publish result to OUTPUT_QUEUE:
-     {"ID": 1, "status": "ok", "data": { ...parsed... }}
+  2. Parse with the parser selected by CbpFormType
+  3. Publish result to OUTPUT_QUEUE, echoing ID / FileNumber / CbpFormType:
+     {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "ok", "data": { ...parsed... }}
      or on error:
-     {"ID": 1, "status": "error", "message": "..."}
+     {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "error", "message": "..."}
   4. ack the original message
 
 Environment variables (put in .env or export before running):
@@ -36,9 +45,12 @@ from pathlib import Path
 
 import pika
 
-# ── make parse_7501 importable whether running from repo root or here ─────────
+# ── make parsers importable whether running from repo root or here ─────────────
 sys.path.insert(0, str(Path(__file__).parent))
-from parse_7501 import parse as parse_pdf
+# FORM_TYPE_* come from the parsers themselves so each form type has a single
+# source of truth (parse_7501 → 10, parse_cad → 20).
+from parse_7501 import CBP_FORM_TYPE as FORM_TYPE_US, parse as parse_pdf
+from parse_cad import CBP_FORM_TYPE as FORM_TYPE_CA, parse as parse_cad_pdf
 
 # ── logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -58,6 +70,30 @@ INPUT_QUEUE    = os.environ.get("INPUT_QUEUE",  "cbp7501.parse.request")
 OUTPUT_QUEUE   = os.environ.get("OUTPUT_QUEUE", "cbp7501.parse.result")
 PREFETCH_COUNT = int(os.environ.get("PREFETCH_COUNT", "4"))
 
+# FORM_TYPE_US / FORM_TYPE_CA are imported from parse_7501 / parse_cad above.
+_SUPPORTED_FORM_TYPES = (FORM_TYPE_US, FORM_TYPE_CA)
+
+
+def _resolve_form_type(payload: dict) -> int:
+    """Return normalized CbpFormType; default 10. Raises ValueError if unsupported."""
+    raw = payload.get("CbpFormType", FORM_TYPE_US)
+    if raw is None:
+        raw = FORM_TYPE_US
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return FORM_TYPE_US
+        try:
+            raw = int(raw)
+        except ValueError as e:
+            raise ValueError(f"Invalid CbpFormType: {payload.get('CbpFormType')!r}") from e
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"Invalid CbpFormType: {payload.get('CbpFormType')!r}")
+    if raw not in _SUPPORTED_FORM_TYPES:
+        raise ValueError(f"Unsupported CbpFormType: {raw}")
+    return raw
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 def download_pdf(url: str, dest: str, timeout: int = 60) -> None:
     """Download a file from URL to dest path (works with pre-signed OBS links)."""
@@ -76,27 +112,46 @@ def declare_queues(channel: pika.adapters.blocking_connection.BlockingChannel) -
 def on_message(channel, method, properties, body):
     msg_id      = None
     file_number = ""
+    form_type   = None
     tmp_pdf     = None
     try:
         payload     = json.loads(body)
         msg_id      = payload.get("ID")
         file_number = payload.get("FileNumber", "")
-        url         = payload["URL"]
-        log.info("Received ID=%s  FileNumber=%s  URL=%s…", msg_id, file_number, url[:80])
+        # Echo the requested CbpFormType in the envelope even when validation or
+        # parsing fails; _resolve_form_type() overwrites it with the normalized
+        # value on success.
+        raw_form_type = payload.get("CbpFormType")
+        form_type     = FORM_TYPE_US if raw_form_type in (None, "") else raw_form_type
+        url           = payload["URL"]
+        form_type     = _resolve_form_type(payload)
+        log.info(
+            "Received ID=%s  FileNumber=%s  CbpFormType=%s  URL=%s…",
+            msg_id, file_number, form_type, url[:80],
+        )
 
         # 1. Download PDF to a temp file
-        suffix  = f"_7501_{msg_id}.pdf"
+        suffix  = f"_t{form_type}_{msg_id}.pdf"
         tmp_pdf = tempfile.mktemp(suffix=suffix)
         download_pdf(url, tmp_pdf)
         log.info("Downloaded %d bytes → %s", Path(tmp_pdf).stat().st_size, tmp_pdf)
 
         # 2. Parse
-        result = parse_pdf(tmp_pdf)
-        log.info("Parsed %d line items", result["line_item_count"])
+        if form_type == FORM_TYPE_US:
+            result = parse_pdf(tmp_pdf)
+        else:
+            result = parse_cad_pdf(tmp_pdf)
+        log.info("Parsed %d line items", result.get("line_item_count", 0))
 
         # 3. Publish result
         out_msg = json.dumps(
-            {"ID": msg_id, "FileNumber": file_number, "status": "ok", "data": result},
+            {
+                "ID":           msg_id,
+                "FileNumber":   file_number,
+                "CbpFormType":  form_type,
+                "status":       "ok",
+                "data":         result,
+            },
             ensure_ascii=False,
         )
         channel.basic_publish(
@@ -111,12 +166,14 @@ def on_message(channel, method, properties, body):
         log.info("Published result for ID=%s to %s", msg_id, OUTPUT_QUEUE)
 
     except KeyError as e:
-        _publish_error(channel, msg_id, file_number, f"Missing field in message: {e}")
+        _publish_error(channel, msg_id, file_number, form_type, f"Missing field in message: {e}")
+    except ValueError as e:
+        _publish_error(channel, msg_id, file_number, form_type, str(e))
     except urllib.error.URLError as e:
-        _publish_error(channel, msg_id, file_number, f"Download failed: {e}")
+        _publish_error(channel, msg_id, file_number, form_type, f"Download failed: {e}")
     except Exception as e:
         log.exception("Unexpected error for ID=%s", msg_id)
-        _publish_error(channel, msg_id, file_number, str(e))
+        _publish_error(channel, msg_id, file_number, form_type, str(e))
     finally:
         # Always ack (we've either published result or error)
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -125,11 +182,18 @@ def on_message(channel, method, properties, body):
             Path(tmp_pdf).unlink(missing_ok=True)
 
 
-def _publish_error(channel, msg_id, file_number, message: str) -> None:
-    log.error("Error for ID=%s FileNumber=%s: %s", msg_id, file_number, message)
+def _publish_error(channel, msg_id, file_number, form_type, message: str) -> None:
+    log.error("Error for ID=%s FileNumber=%s CbpFormType=%s: %s",
+              msg_id, file_number, form_type, message)
     try:
         err_msg = json.dumps(
-            {"ID": msg_id, "FileNumber": file_number, "status": "error", "message": message},
+            {
+                "ID":          msg_id,
+                "FileNumber":  file_number,
+                "CbpFormType": form_type,
+                "status":      "error",
+                "message":     message,
+            },
             ensure_ascii=False,
         )
         channel.basic_publish(

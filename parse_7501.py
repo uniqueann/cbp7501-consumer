@@ -19,6 +19,12 @@ except ImportError:
     print("ERROR: pdfplumber not installed. Run: pip install pdfplumber --break-system-packages", file=sys.stderr)
     sys.exit(1)
 
+# ── Form type ────────────────────────────────────────────────────────────────
+# CbpFormType handled by this parser. consumer.py reports it in the output
+# envelope next to ID / FileNumber, and uses it as the default when an inbound
+# message omits the field.
+CBP_FORM_TYPE = 10
+
 # ── Commodity description lookup (HTSUS → human-readable label) ──────────────
 # Extend this dict as you encounter new HTS codes across batches.
 COMMODITY_DESCRIPTIONS: dict[str, str] = {
@@ -210,6 +216,48 @@ _OLD_FORMAT_RE = re.compile(r"^\d{3}\s+(PRD ANY|IEEPA)", re.MULTILINE)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def _invoice_currency(text: str) -> str:
+    match = re.search(r"\bInvoice Value[ \t]+([A-Z]{3})[ \t]+[\d,]+(?:\.\d+)?\b", text, re.I)
+    if not match:
+        match = re.search(
+            r"(?m)^Totals for Invoice[^\n]*\n[^\n]*?[ \t]+[\d,]+(?:\.\d+)?[ \t]+([A-Z]{3})\b",
+            text,
+            re.I,
+        )
+    return match.group(1).upper() if match else "USD"
+
+
+def _line_conversion_fields(text: str, line_item_count: int) -> dict:
+    fields = {
+        "value_for_currency_conversion": None,
+        "conversion_currency": "",
+        "exchange_rate": None,
+    }
+    summaries = list(re.finditer(
+        r"(?mi)^Totals[ \t]+for[ \t]+Invoice[^\n]*\n"
+        r"[ \t]*\S+[ \t]+([\d,]+(?:\.\d+)?)[ \t]+([A-Z]{3})"
+        r"(?:[ \t]+[+-]?[\d,]+(?:\.\d+)?)?"
+        r"[ \t]+(\d+(?:\.\d+)?)[ \t]+[\d,]+(?:\.\d+)?[ \t]+[A-Z]{3}[ \t]*$",
+        text,
+    ))
+    if not summaries:
+        summaries = list(re.finditer(
+            r"\bInvoice Value[ \t]+([A-Z]{3})[ \t]+([\d,]+(?:\.\d+)?)\b",
+            text,
+            re.I,
+        ))
+        if len(summaries) == 1:
+            fields["conversion_currency"] = summaries[0].group(1).upper()
+            if line_item_count == 1:
+                fields["value_for_currency_conversion"] = _money(summaries[0].group(2))
+    elif len(summaries) == 1:
+        fields["conversion_currency"] = summaries[0].group(2).upper()
+        fields["exchange_rate"] = _money(summaries[0].group(3))
+        if line_item_count == 1:
+            fields["value_for_currency_conversion"] = _money(summaries[0].group(1))
+    return fields
+
+
 def _money(s: str | None) -> float | str | None:
     if not s:
         return None
@@ -680,6 +728,8 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
 
     return {
         "form":                   "CBP 7501",
+        "currency":               "USD",
+        "invoice_currency":       _invoice_currency(text),
         "filer_code_entry_number":  filer_code,
         "entry_type":             entry_type,
         "summary_date":           summary_date,
@@ -1122,18 +1172,38 @@ def _parse_header_v2(all_lines, pdf_path):
     grand_total = _money(grand_total_m.group(1)) if grand_total_m else None
 
     # HMF / MPF
+    fee_summary_m = re.search(r"Other Fee Summary.*?(?=Total Other Fees|\Z)", text, re.DOTALL)
+    fee_summary = fee_summary_m.group(0) if fee_summary_m else ""
+    hmf_m = re.search(
+        r"(?:501\s*-\s*HMF|Harbor Maintenance Fee)\s*(?:[\d.]+%\s*)?\$\s*([\d,]+(?:\.\d{2})?)",
+        fee_summary
+    )
+    mpf_m = re.search(
+        r"(?:499\s*-\s*MPF|Merchandise Processing Fee)\s*(?:[\d.]+%\s*)?\$\s*([\d,]+(?:\.\d{2})?)",
+        fee_summary
+    )
+    hmf = _money(hmf_m.group(1)) if hmf_m else None
+    mpf = _money(mpf_m.group(1)) if mpf_m else None
+    if hmf is None:
+        hmf = _money(_find(r"501\s*-\s*HMF\s*\$\s*([\d,]+(?:\.\d{2})?)"))
+    if mpf is None:
+        mpf = _money(_find(r"499\s*-\s*MPF\s*\$\s*([\d,]+(?:\.\d{2})?)"))
     # B-1: "Harbor Maintenance Fee  $11.14"
     # C-1: "Harbor Maintenance Fee 0.1250% $7.45"
-    hmf = _money(_find(r"Harbor Maintenance Fee\s+(?:[\d.]+%\s+)?\$([\d.]+)"))
-    mpf = _money(_find(r"Merchandise Processing Fee\s+(?:[\d.]+%\s+)?\$([\d.]+)"))
+    if hmf is None:
+        hmf = _money(_find(r"Harbor Maintenance Fee\s+(?:[\d.]+%\s+)?\$([\d.]+)"))
+    if mpf is None:
+        mpf = _money(_find(r"Merchandise Processing Fee\s+(?:[\d.]+%\s+)?\$([\d.]+)"))
     # D-1: "HARBOR_MAINTENANCE_FEE(501) 0.125% 0.72"
-    if not hmf:
+    if hmf is None:
         hmf = _money(_find(r"HARBOR_MAINTENANCE_FEE\(501\)\s+[\d.]+%\s+\$?([\d.]+)"))
-    if not mpf:
+    if mpf is None:
         mpf = _money(_find(r"FORMAL_MERCHANDISE_PROCESSING_FEE\(499\)\s+[\d.]+%\s+\$?([\d.]+)"))
 
     return {
         "form":                    "CBP 7501",
+        "currency":                "USD",
+        "invoice_currency":        _invoice_currency(text),
         "filer_code_entry_number": filer_entry,
         "entry_type":              entry_type,
         "summary_date":            summary_date,
@@ -1503,6 +1573,14 @@ def parse(pdf_path: str) -> dict:
         header     = _parse_header_v2(all_lines, pdf_path)
         blocks     = _split_blocks_v2(all_lines)
         line_items = [p for b in blocks for p in [_parse_block_v2(b)] if p]
+
+    conversion_fields = _line_conversion_fields(text, len(line_items))
+    for item in line_items:
+        item.update(conversion_fields)
+        if (item["value_for_currency_conversion"] is None
+            and item["conversion_currency"] == header["currency"]
+            and item["exchange_rate"] in (None, 1.0)):
+            item["value_for_currency_conversion"] = item["commodity"].get("entered_value")
 
     # 新判定规则：只要 grand_total_usd 不为 None 就算成功
     totals = header.get("totals", {})
