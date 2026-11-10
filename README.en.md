@@ -8,7 +8,7 @@ PDF parsing service for **CBP Form 7501** (U.S. Customs Entry Summary) and **Can
 
 - **RabbitMQ consumer** (`consumer.py`): async task processing with concurrency, reconnection, error reporting, and parser routing via `CbpFormType`
 - **PDF parser v1** (`parse_7501.py`): `CbpFormType=10` (default) — header, line items, HTSUS, duties, etc.
-- **Canada parser** (`parse_cad.py`): `CbpFormType=20` — parses CBSA BSF864 and returns the same schema as the 7501 parser; amounts are CAD (see the currency notes below)
+- **Canada parser** (`parse_cad.py`): `CbpFormType=20` — parses CBSA BSF864 into its native structure (`schema_version` 2.0); amounts are CAD
 
 ## Project Structure
 
@@ -143,14 +143,39 @@ For **`CbpFormType=10` (7501)**, `data` typically contains:
 - **line_items**: line-level commodity data (descriptions, HTSUS, quantities, duty rates and amounts)
 - **line_item_count**: number of line items
 
-For **`CbpFormType=20` (Canada BSF864)**, `data` uses the **exact same** `header` / `line_items` / `line_item_count` structure as the 7501 parser so downstream code can handle both uniformly. Watch these semantic differences:
+For **`CbpFormType=20` (Canada BSF864)**, `data` uses the native BSF864 shape (`schema_version` 2.0) rather than mirroring the 7501 result:
 
-- `header.currency` is `"CAD"`; `header.invoice_currency` comes from form field 40
-- The `totals.*_usd` key names are inherited from the 7501 parser but the **values are CAD** — always check `header.currency` first
-- `totals.other_fees_usd` = `grand_total - duty`, i.e. the GST/PST tax total
-- `line_items[].fees[]` carries GST / PST / excise items; `code` is the BSF864 field number (e.g. `"90"` is GST) and `rate` is always `null`
-- `header.consignee` is an empty placeholder; importer details live in `header.importer_of_record`
-- 7501-only fields (`surety_number`, `bond_type`, `mpf_usd`, `hmf_usd`, …) are always empty string or `null`
+```json
+{
+  "schema_version": "2.0",
+  "document":   { "form": "CBSA BSF864", "pages": 9,
+                  "printed_at": "2026-11-06 17:02", "notes": "DFSU7422980" },
+  "header":     { "type_code": "AB", "office_no": "495", "importer_bn": "756552105RM0001",
+                  "gross_weight_kg": 19859.53, "cargo_control_no": "...",
+                  "importer": { "name": "...", "street": "...", "city": "...",
+                                "zip": "V6C1S4", "country": "CA" } },
+  "invoices":   [ { "page": 2, "invoice_no": "...", "invoice_value": 10006.22,
+                    "invoice_currency": "USD", "freight": 0.0, "vendor": {...} } ],
+  "totals":     { "currency": "CAD", "value_for_duty": 13584.45, "duty": 0.0,
+                  "gst": 679.22, "pst_hst": 0.0, "total_duties_and_taxes": 679.22,
+                  "value_for_tax": 13584.45, "value_for_tax_derived": true },
+  "line_items": [ { "line_no": 1, "hs_code": "9403.60.9090", "hs_code_6": "9403.60",
+                    "description": "STORAGE CABINET", "quantity": 578,
+                    "value_for_duty": 13584.45, "gst": 679.22, "line_total": 679.22 } ],
+  "line_item_count": 1,
+  "warnings":   [ { "code": "EMPTY_HEADER_FIELDS", "fields": ["signed_date"] } ]
+}
+```
+
+Key points:
+
+- **`document`**: form identity, page count, print timestamp (from the footer), and field 35 notes
+- **`header`**: flat mapping of BSF864 fields 1-22; `importer` is `{name, street, city, zip, country}` and `importer_bn` is separate (`null` when the form does not print one)
+- **`invoices`**: fields 36-43 are a **page-level** block (one invoice can span pages), so they live in an array; line items point at it via `invoice_ref`
+- **`totals`**: full duty/tax breakdown from fields 113-130; the `*_usd` suffixes are gone and `currency` is always `"CAD"`
+- **`value_for_tax`**: BSF864 has **no** declaration-level value for tax, so this is derived as `sum(line_items[].value_for_tax)` and flagged with `value_for_tax_derived: true`
+- **`line_items`**: `hs_code` is the full **10-digit** code (`9403.60.9090`) with `hs_code_6` alongside; `line_no` is an integer and `line_no_raw` keeps the printed form; each duty/tax is its own flat field
+- **`warnings`**: separates "blank on the form" (`EMPTY_HEADER_FIELDS` / `EMPTY_QUANTITY`) from real parse problems (`TOTAL_MISMATCH` / `MISSING_DECLARATION_TOTAL`), plus `DERIVED_VALUE` for computed fields
 
 ## Processing Flow
 

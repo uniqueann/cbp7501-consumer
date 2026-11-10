@@ -8,7 +8,7 @@ CBP Form 7501（美国海关进口报关单）与加拿大 CBSA BSF864 PDF 解�
 
 - **RabbitMQ 消费者**（`consumer.py`）：异步处理解析任务，支持并发、断线重连与错误回传；按 `CbpFormType` 路由解析器
 - **PDF 解析器 v1**（`parse_7501.py`）：`CbpFormType=10`（默认），针对常见 7501 版式提取表头、行项目、HTSUS、关税等信息
-- **加拿大解析器**（`parse_cad.py`）：`CbpFormType=20`，解析 CBSA BSF864，输出与 7501 结果同构的 schema；金额为 CAD（见下方币种说明）
+- **加拿大解析器**（`parse_cad.py`）：`CbpFormType=20`，解析 CBSA BSF864，输出 BSF864 原生结构（`schema_version` 2.0），金额单位 CAD
 
 ## 项目结构
 
@@ -142,14 +142,39 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 - **line_items**：行项目列表（商品描述、HTSUS、数量、关税税率与金额等）
 - **line_item_count**：行项目数量
 
-**`CbpFormType=20`（加拿大 BSF864）** 时 `data` 的 `header` / `line_items` / `line_item_count` 结构与 7501 **完全一致**，便于下游统一处理。语义差异需注意：
+**`CbpFormType=20`（加拿大 BSF864）** 时 `data` 采用 BSF864 原生结构（`schema_version` 2.0），不再模仿 7501：
 
-- `header.currency` 为 `"CAD"`，`header.invoice_currency` 取表单字段 40（发票币种）
-- `totals.*_usd` 系列键名沿用 7501，但**其中的数值是 CAD**，使用前必须先判断 `header.currency`
-- `totals.other_fees_usd` = `grand_total - duty`，实际是 GST/PST 等税费合计
-- `line_items[].fees[]` 承载 GST/PST/消费税等税目，`code` 为 BSF864 字段号（如 `"90"` 为 GST），`rate` 恒为 `null`
-- `header.consignee` 为空白占位；进口商信息在 `header.importer_of_record`
-- 7501 专属字段（`surety_number`、`bond_type`、`mpf_usd`、`hmf_usd` 等）恒为空字符串或 `null`
+```json
+{
+  "schema_version": "2.0",
+  "document":   { "form": "CBSA BSF864", "pages": 9,
+                  "printed_at": "2026-11-06 17:02", "notes": "DFSU7422980" },
+  "header":     { "type_code": "AB", "office_no": "495", "importer_bn": "756552105RM0001",
+                  "gross_weight_kg": 19859.53, "cargo_control_no": "...",
+                  "importer": { "name": "...", "street": "...", "city": "...",
+                                "zip": "V6C1S4", "country": "CA" } },
+  "invoices":   [ { "page": 2, "invoice_no": "...", "invoice_value": 10006.22,
+                    "invoice_currency": "USD", "freight": 0.0, "vendor": {...} } ],
+  "totals":     { "currency": "CAD", "value_for_duty": 13584.45, "duty": 0.0,
+                  "gst": 679.22, "pst_hst": 0.0, "total_duties_and_taxes": 679.22,
+                  "value_for_tax": 13584.45, "value_for_tax_derived": true },
+  "line_items": [ { "line_no": 1, "hs_code": "9403.60.9090", "hs_code_6": "9403.60",
+                    "description": "STORAGE CABINET", "quantity": 578,
+                    "value_for_duty": 13584.45, "gst": 679.22, "line_total": 679.22 } ],
+  "line_item_count": 1,
+  "warnings":   [ { "code": "EMPTY_HEADER_FIELDS", "fields": ["signed_date"] } ]
+}
+```
+
+要点：
+
+- **`document`**：表单标识、页数、打印时间（来自页脚 `Printed`）、字段 35 备注
+- **`header`**：BSF864 字段 1-22 的扁平映射；`importer` 是 `{name, street, city, zip, country}`，`importer_bn` 独立字段（表单未印时为 `null`）
+- **`invoices`**：字段 36-43 是**页级**块（一张发票可能跨多页），故独立成数组；行项目用 `invoice_ref` 指向其索引
+- **`totals`**：字段 113-130 的完整税目拆分；`*_usd` 后缀已弃用，`currency` 恒为 `"CAD"`
+- **`value_for_tax`**：BSF864 申报级**没有**该字段，此值由 `sum(line_items[].value_for_tax)` 派生，并置 `value_for_tax_derived: true`
+- **`line_items`**：`hs_code` 为完整 **10 位**（`9403.60.9090`），另给 `hs_code_6`；`line_no` 为整数并保留 `line_no_raw` 原文；各税目为独立扁平字段
+- **`warnings`**：区分「表单本身空白」（`EMPTY_HEADER_FIELDS` / `EMPTY_QUANTITY`）与「解析异常」（`TOTAL_MISMATCH` / `MISSING_DECLARATION_TOTAL`），另有 `DERIVED_VALUE` 标注派生值
 
 ## 处理流程
 
