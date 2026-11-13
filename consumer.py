@@ -17,8 +17,10 @@ CbpFormType (optional, default 10):
 For each message:
   1. Download the PDF from URL (pre-signed OBS link, no auth header needed)
   2. Parse with the parser selected by CbpFormType
-  3. Publish result to OUTPUT_QUEUE, echoing ID / FileNumber / CbpFormType:
-     {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "ok", "data": { ...parsed... }}
+  3. Publish result to OUTPUT_QUEUE, echoing ID / FileNumber / CbpFormType.
+     On success the parsed payload is keyed by the form type it came from:
+     {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "ok", "us_data": { ...parsed... }}
+     {"ID": 1, "FileNumber": "...", "CbpFormType": 20, "status": "ok", "ca_data": { ...parsed... }}
      or on error:
      {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "error", "message": "..."}
   4. ack the original message
@@ -144,13 +146,17 @@ def on_message(channel, method, properties, body):
         log.info("Parsed %d line items", result.get("line_item_count", 0))
 
         # 3. Publish result
+        # The payload key names the form type it came from (us_data / ca_data) so
+        # consumers can bind the field without first testing CbpFormType. Only the
+        # matching key is present; the other one is omitted entirely.
+        data_key = "us_data" if form_type == FORM_TYPE_US else "ca_data"
         out_msg = json.dumps(
             {
                 "ID":           msg_id,
                 "FileNumber":   file_number,
                 "CbpFormType":  form_type,
                 "status":       "ok",
-                "data":         result,
+                data_key:       result,
             },
             ensure_ascii=False,
         )

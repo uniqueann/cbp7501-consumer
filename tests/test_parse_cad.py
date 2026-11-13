@@ -68,6 +68,67 @@ class ParseCadFieldTests(unittest.TestCase):
         self.assertEqual(parse_cad._amount(text, 123, "TOTAL GST"),
                          parse_cad.Decimal("1116.34"))
 
+    def test_amount_finds_value_above_label_line(self):
+        # ONEU1658857 prints 130's amount on its own line above the label.
+        text = (
+            "129 Total Duties & Taxes with Interest - Total des droits 5237.21\n"
+            "5237.21\n"
+            "130 Total Duties & Taxes - Total des droits et taxes\n"
+        )
+        self.assertEqual(parse_cad._amount(text, 130, "TOTAL DUTIES & TAXES"),
+                         parse_cad.Decimal("5237.21"))
+
+    def test_amount_ignores_leading_date_on_label_line(self):
+        # The same declaration puts the signature date before the field number.
+        text = (
+            "5237.21\n"
+            "2026-10-13 130 Total Duties & Taxes - Total des droits et taxes\n"
+        )
+        self.assertEqual(parse_cad._amount(text, 130, "TOTAL DUTIES & TAXES"),
+                         parse_cad.Decimal("5237.21"))
+
+    def test_amount_number_does_not_match_longer_field_number(self):
+        # Field 1130 must never be read as field 130.
+        text = "1130 Total Duties & Taxes - Total des droits et taxes 99.99\n"
+        self.assertIsNone(parse_cad._amount(text, 130, "TOTAL DUTIES & TAXES"))
+
+    def test_signed_date_above_caption(self):
+        # CAD-1 prints the date alone on the line above "Date Signature".
+        text = "\n".join([
+            "130 TOTAL DUTIES & TAXES - Total des droits et taxes 679.22",
+            "2026-05-20",
+            "Date Signature",
+            "BSF864 Page 1 of/de 3",
+        ])
+        self.assertEqual(parse_cad._parse_signed_date(text), "2026-05-20")
+
+    def test_signed_date_prefixed_to_field_130(self):
+        # ONEU1658857 puts the signature date before the field number.
+        text = "\n".join([
+            "5237.21",
+            "2026-10-13 130 Total Duties & Taxes - Total des droits et taxes",
+            "Date Signature",
+        ])
+        self.assertEqual(parse_cad._parse_signed_date(text), "2026-10-13")
+
+    def test_signed_date_absent_returns_none(self):
+        # CAD-2/3/4 and CSNU print no signature date at all.
+        text = "\n".join([
+            "129 Total Duties & Taxes with Interest - Total des droits 702.22",
+            "702.22",
+            "130 Total Duties & Taxes - Total des droits et taxes",
+            "Printed 2026-10-29 13:07 Page 1 of 2",
+        ])
+        self.assertIsNone(parse_cad._parse_signed_date(text))
+
+    def test_printed_date_is_not_mistaken_for_signed_date(self):
+        # The footer "Printed YYYY-MM-DD" must never leak into signed_date.
+        text = "\n".join([
+            "130 Total Duties & Taxes - Total des droits et taxes",
+            "Printed 2026-10-29 13:11 Page 1 of 3",
+        ])
+        self.assertIsNone(parse_cad._parse_signed_date(text))
+
     def test_bsf864_detected_without_title_block(self):
         # CAD-2 / CAD-4 print no "Commercial Accounting Declaration" banner,
         # only a revision marker; structure alone must be enough.
@@ -288,6 +349,13 @@ class ParseCadSampleTests(unittest.TestCase):
         self.assertIn("DERIVED_VALUE", codes)
         self.assertNotIn("TOTAL_MISMATCH", codes)
         self.assertNotIn("EMPTY_QUANTITY", codes)
+
+    def test_signed_date_is_extracted_from_the_signature_block(self):
+        # CAD-1 prints "2026-05-20" above the "Date Signature" caption.
+        self.assertEqual(self.result["header"]["signed_date"], "2026-05-20")
+        empty = next(w["fields"] for w in self.result["warnings"]
+                     if w["code"] == "EMPTY_HEADER_FIELDS")
+        self.assertNotIn("signed_date", empty)
 
     def test_json_serialisable(self):
         json.dumps(self.result)

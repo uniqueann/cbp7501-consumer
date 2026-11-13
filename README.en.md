@@ -107,7 +107,9 @@ If no output path is given, results are printed to stdout.
 
 ### Output Queue (`OUTPUT_QUEUE`)
 
-**Success:**
+The parsed payload is keyed by the form type it came from: `us_data` for type 10, `ca_data` for type 20. **Only the matching key is present.**
+
+**Success (`CbpFormType=10`):**
 
 ```json
 {
@@ -115,7 +117,7 @@ If no output path is given, results are printed to stdout.
   "FileNumber": "FN2603200001",
   "CbpFormType": 10,
   "status": "ok",
-  "data": {
+  "us_data": {
     "header": { "...": "..." },
     "line_items": [ "..." ],
     "line_item_count": 12
@@ -123,7 +125,28 @@ If no output path is given, results are printed to stdout.
 }
 ```
 
-**Failure:**
+**Success (`CbpFormType=20`):**
+
+```json
+{
+  "ID": 1,
+  "FileNumber": "FN2603200001",
+  "CbpFormType": 20,
+  "status": "ok",
+  "ca_data": {
+    "schema_version": "2.0",
+    "document": { "...": "..." },
+    "header": { "...": "..." },
+    "invoices": [ "..." ],
+    "totals": { "...": "..." },
+    "line_items": [ "..." ],
+    "line_item_count": 1,
+    "warnings": []
+  }
+}
+```
+
+**Failure (no `us_data` / `ca_data`, only `message`):**
 
 ```json
 {
@@ -137,13 +160,13 @@ If no output path is given, results are printed to stdout.
 
 ## Parse Result Structure
 
-For **`CbpFormType=10` (7501)**, `data` typically contains:
+For **`CbpFormType=10` (7501)**, `us_data` typically contains:
 
 - **header**: form header (entry number, entry type, port, dates, carrier, country of origin, etc.)
 - **line_items**: line-level commodity data (descriptions, HTSUS, quantities, duty rates and amounts)
 - **line_item_count**: number of line items
 
-For **`CbpFormType=20` (Canada BSF864)**, `data` uses the native BSF864 shape (`schema_version` 2.0) rather than mirroring the 7501 result:
+For **`CbpFormType=20` (Canada BSF864)**, `ca_data` uses the native BSF864 shape (`schema_version` 2.0) rather than mirroring the 7501 result:
 
 ```json
 {

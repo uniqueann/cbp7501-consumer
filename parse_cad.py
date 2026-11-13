@@ -122,6 +122,11 @@ _HEADER_FIELDS: tuple[tuple[int, str | tuple[str, ...], str], ...] = (
 _POSTAL_RE = re.compile(r"[A-Z]\d[A-Z]\s?\d[A-Z]\d")
 _BN_RE = re.compile(r"\b\d{9}RM\d{4}\b")
 _PRINTED_RE = re.compile(r"Printed\s+(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?")
+# A date printed alone on its own line (the signature block above "Date Signature").
+_BARE_DATE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*$")
+# A date printed before field 130 on the same line: "2026-10-13 130 Total Duties & Taxes - ..."
+_DATE_BEFORE_130_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s+130\b")
+_SIGNATURE_CAPTION_RE = re.compile(r"^\s*date\s+(?:de\s+)?signature\b", re.I)
 
 
 # ── Low-level cell readers ────────────────────────────────────────────────────
@@ -175,19 +180,38 @@ def _cell(table: list[list[str | None]], number: int) -> str:
 
 
 def _amount(text: str, number: int, label: str) -> Decimal | None:
-    """Read a declaration-level amount, tolerating value-before-label layouts."""
-    match = re.search(
-        rf"(?m)^\s*{number}\s+{re.escape(label)}\s+-[^\n]*?\s+({_MONEY_RE})(?=\s|$)",
-        text,
-        re.I,
-    )
-    if not match:
-        match = re.search(
-            rf"(?m)^[ \t]*({_MONEY_RE})[ \t]*\n[ \t]*{number}[ \t]+{re.escape(label)}[ \t]+-[^\n]*",
-            text,
-            re.I,
-        )
-    return Decimal(match.group(1).replace(",", "")) if match else None
+    """Read a declaration-level amount, tolerating the print variants on BSF864.
+
+    Three layouts occur in practice:
+      * value trailing the label on the same line
+        ``113 Total Value for Duty - ... 24896.83``
+      * value printed on its own line directly above the label
+        ``5237.21`` / ``130 Total Duties & Taxes - ...``
+      * a signature date printed before the field number on the label line
+        ``2026-10-13 130 Total Duties & Taxes - ...``
+    """
+    lines = text.splitlines()
+    # A field number may be preceded by other text (the date above), so anchor on
+    # a non-digit boundary rather than the start of the line. That still rules out
+    # "1130 Total ..." for number 130, because the preceding char is a digit.
+    heading = re.compile(rf"(?:^|(?<=\s)){number}\s+{re.escape(label)}", re.I)
+
+    for index, line in enumerate(lines):
+        if not heading.search(line):
+            continue
+        trailing = re.search(rf"({_MONEY_RE})\s*$", line)
+        if trailing:
+            return Decimal(trailing.group(1).replace(",", ""))
+        # The amount sits on the line(s) just above; stop at the first line that
+        # is not a bare amount so unrelated figures cannot be picked up.
+        for previous in range(index - 1, max(index - 4, -1), -1):
+            bare = re.fullmatch(rf"\s*({_MONEY_RE})\s*", lines[previous])
+            if bare:
+                return Decimal(bare.group(1).replace(",", ""))
+            if lines[previous].strip():
+                break
+        return None
+    return None
 
 
 _NUMBER_RE = re.compile(r"\s*-?[\d,]+(?:\.\d*)?\s*")
@@ -422,7 +446,38 @@ def _parse_importer(table: list[list[str | None]]) -> dict:
     return importer
 
 
-def _parse_header(header_table: list[list[str | None]], warnings: list[dict]) -> dict:
+def _parse_signed_date(text: str) -> str | None:
+    """Return the date the declaration was signed, or None when not printed.
+
+    The date lands in one of three places depending on the batch:
+      * alone on the line just above the "Date Signature" caption
+        ``2026-05-20`` / ``Date Signature``            (CAD-1)
+      * prefixed to field 130 on the same line
+        ``2026-10-13 130 Total Duties & Taxes - ...``   (ONEU1658857)
+      * not printed at all                               (CAD-2/3/4, CSNU, DFSU)
+    """
+    lines = text.splitlines()
+
+    for index, line in enumerate(lines):
+        if not _SIGNATURE_CAPTION_RE.match(line):
+            continue
+        # Walk up a couple of lines: DFSU has the caption after field 130.
+        for previous in range(index - 1, max(index - 3, -1), -1):
+            match = _BARE_DATE_RE.match(lines[previous])
+            if match:
+                return match.group(1)
+            if lines[previous].strip():
+                break
+
+    for line in lines:
+        match = _DATE_BEFORE_130_RE.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _parse_header(header_table: list[list[str | None]], warnings: list[dict],
+                  text: str = "") -> dict:
     header: dict = {}
     empty: list[str] = []
     for number, label, key in _HEADER_FIELDS:
@@ -454,9 +509,11 @@ def _parse_header(header_table: list[list[str | None]], warnings: list[dict]) ->
 
     header["importer"] = _parse_importer(header_table)
 
-    # The "Date Signature" line is a signature area, not a text field.
-    header["signed_date"] = None
-    empty.append("signed_date")
+    # The signature block carries the date the declaration was signed. It is not
+    # a numbered field, so it is read from the page text rather than a table cell.
+    header["signed_date"] = _parse_signed_date(text)
+    if header["signed_date"] is None:
+        empty.append("signed_date")
 
     # Field 3 is the single declaration date on BSF864. Older batches print it as
     # "Accounting Date", newer ones as "Submission Date"; both are the same cell,
@@ -674,7 +731,7 @@ def parse(pdf_path: str) -> dict:
     }
 
     # ── header ───────────────────────────────────────────────────────────────
-    header = _parse_header(header_table, warnings)
+    header = _parse_header(header_table, warnings, texts[0])
 
     # ── invoices (page-level, fields 36-43) ──────────────────────────────────
     invoices: list[dict] = []

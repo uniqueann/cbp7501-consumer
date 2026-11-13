@@ -106,7 +106,9 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 
 ### 输出队列（`OUTPUT_QUEUE`）
 
-**成功：**
+成功消息的解析结果按 `CbpFormType` 命名：类型 10 用 `us_data`，类型 20 用 `ca_data`，**只出现匹配的那一个键**。
+
+**成功（`CbpFormType=10`）：**
 
 ```json
 {
@@ -114,7 +116,7 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
   "FileNumber": "FN2603200001",
   "CbpFormType": 10,
   "status": "ok",
-  "data": {
+  "us_data": {
     "header": { "...": "..." },
     "line_items": [ "..." ],
     "line_item_count": 12
@@ -122,7 +124,28 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 }
 ```
 
-**失败：**
+**成功（`CbpFormType=20`）：**
+
+```json
+{
+  "ID": 1,
+  "FileNumber": "FN2603200001",
+  "CbpFormType": 20,
+  "status": "ok",
+  "ca_data": {
+    "schema_version": "2.0",
+    "document": { "...": "..." },
+    "header": { "...": "..." },
+    "invoices": [ "..." ],
+    "totals": { "...": "..." },
+    "line_items": [ "..." ],
+    "line_item_count": 1,
+    "warnings": []
+  }
+}
+```
+
+**失败（无 `us_data` / `ca_data`，只有 `message`）：**
 
 ```json
 {
@@ -136,13 +159,13 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 
 ## 解析结果说明
 
-**`CbpFormType=10`（7501）** 时 `data` 主要包含：
+**`CbpFormType=10`（7501）** 时 `us_data` 主要包含：
 
 - **header**：表头信息（Entry Number、Entry Type、港口、日期、承运人、原产国等）
 - **line_items**：行项目列表（商品描述、HTSUS、数量、关税税率与金额等）
 - **line_item_count**：行项目数量
 
-**`CbpFormType=20`（加拿大 BSF864）** 时 `data` 采用 BSF864 原生结构（`schema_version` 2.0），不再模仿 7501：
+**`CbpFormType=20`（加拿大 BSF864）** 时 `ca_data` 采用 BSF864 原生结构（`schema_version` 2.0），不再模仿 7501：
 
 ```json
 {
