@@ -9,32 +9,72 @@ PDF parsing service for **CBP Form 7501** (U.S. Customs Entry Summary) and **Can
 - **RabbitMQ consumer** (`consumer.py`): async task processing with concurrency, reconnection, error reporting, and parser routing via `CbpFormType`
 - **PDF parser v1** (`parse_7501.py`): `CbpFormType=10` (default) — header, line items, HTSUS, duties, etc.
 - **Canada parser** (`parse_cad.py`): `CbpFormType=20` — parses CBSA BSF864 into its native structure (`schema_version` 2.0); amounts are CAD
+- **U.S. line-item OCR** (`parse_7501_line_ocr.py`): `CbpFormType=15` — parses 7501 line-item screenshots (no text layer) with local OCR plus arithmetic checks
+- **Canada line-item OCR** (`parse_b3_line_ocr.py`): `CbpFormType=25` — parses BSF864 line-item screenshots (no text layer) with local OCR plus arithmetic checks
+
+### CbpFormType overview
+
+| Value | Document | Input | Parser | Output key |
+|---|---|---|---|---|
+| `10` | U.S. CBP 7501 | PDF with text layer | `parse_7501.py` | `us_data` |
+| `15` | U.S. CBP 7501 | Image / image-only PDF | `parse_7501_line_ocr.py` | `us_data` |
+| `20` | Canada CBSA BSF864 | PDF with text layer | `parse_cad.py` | `ca_data` |
+| `25` | Canada CBSA BSF864 | Image / image-only PDF | `parse_b3_line_ocr.py` | `ca_data` |
+
+`15` / `25` are the OCR counterparts of `10` / `20` and **report under the same output
+key** as their text-layer siblings, so downstream code binding `us_data` / `ca_data`
+treats both sources interchangeably.
+
+Every parser is **imported only on first use**: a deployment that serves only text-layer
+PDFs does not need the OCR packages, and vice versa. A missing dependency fails just that
+one message, naming the absent package, without affecting process startup.
 
 ## Project Structure
 
 ```
 cbp7501-consumer/
-├── consumer.py          # RabbitMQ consumer entry point
-├── parse_7501.py        # 7501 PDF parser (CbpFormType=10)
-├── parse_cad.py         # Canada BSF864 parser (CbpFormType=20)
-├── .env.example         # Environment variable template
+├── consumer.py              # RabbitMQ consumer entry point
+├── parse_7501.py            # 7501 PDF parser (CbpFormType=10)
+├── parse_cad.py             # Canada BSF864 parser (CbpFormType=20)
+├── parse_7501_line_ocr.py   # 7501 line-item OCR parser (CbpFormType=15)
+├── parse_b3_line_ocr.py     # BSF864 line-item OCR parser (CbpFormType=25)
+├── parse_b3_line_schema.py  # Reshapes OCR output into BSF864 schema 2.0 (used by 25)
+├── .env.example             # Environment variable template
 ├── files/
-│   ├── input/           # Sample PDFs / JSON for local testing
-│   └── output/          # Sample parse results
-├── README.md            # Chinese documentation
-└── README.en.md         # English documentation (this file)
+│   ├── input/               # Sample PDFs / images for local testing
+│   └── output/              # Sample parse results
+├── README.md                # Chinese documentation
+└── README.en.md             # English documentation (this file)
 ```
 
 ## Requirements
 
 - Python 3.10+
 - RabbitMQ (required when running the consumer)
+- OCR dependencies (only for `CbpFormType=15` / `25`)
 
 ## Installation
 
+Dependencies are split into two files, so you install only what you need:
+
+| Deployment | Command | Handles |
+|---|---|---|
+| Text layer only (small) | `pip install -r requirements.txt` | `10` / `20` |
+| Text layer + OCR | `pip install -r requirements.txt -r requirements-ocr.txt` | `10` / `15` / `20` / `25` |
+| OCR only | `pip install pika -r requirements-ocr.txt` | `15` / `25` |
+
 ```bash
-pip install -r requirements.txt
+# Typical: full deployment
+pip install -r requirements.txt -r requirements-ocr.txt
 ```
+
+- `requirements.txt`: `pika`, `pdfplumber`, `PyMuPDF` (text-layer parsing)
+- `requirements-ocr.txt`: `rapidocr-onnxruntime`, `onnxruntime`, `opencv-python`, `Pillow`, `numpy`, `PyMuPDF`
+
+The two files share only `PyMuPDF`, with matching versions. The OCR set is large
+(~150 MB); skip it entirely when you do not need `15` / `25` — `consumer.py` imports
+parsers lazily, so a missing dependency fails only the affected message and names the
+absent package.
 
 Copy the environment template and adjust as needed:
 
@@ -101,9 +141,9 @@ If no output path is given, results are printed to stdout.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `ID` | Yes | Task ID; echoed in the response |
-| `URL` | Yes | PDF download URL (supports pre-signed OBS links) |
+| `URL` | Yes | File download URL (supports pre-signed OBS links); `15` / `25` may point at an image or an image-only PDF |
 | `FileNumber` | No | Business reference; included in error responses |
-| `CbpFormType` | No | Integer: `10` U.S. full container (default), `20` Canada full container |
+| `CbpFormType` | No | Integer (a numeric string is also accepted): `10` U.S. full container (default), `15` U.S. line-item screenshot, `20` Canada full container, `25` Canada line-item screenshot |
 
 ### Output Queue (`OUTPUT_QUEUE`)
 
@@ -160,13 +200,14 @@ The parsed payload is keyed by the form type it came from: `us_data` for type 10
 
 ## Parse Result Structure
 
-For **`CbpFormType=10` (7501)**, `us_data` typically contains:
+For **`CbpFormType=10` (7501)** and **`CbpFormType=15` (7501 screenshot)**, `us_data`
+typically contains:
 
-- **header**: form header (entry number, entry type, port, dates, carrier, country of origin, etc.)
+- **header**: form header (entry number, entry type, port, dates, carrier, country of origin, etc.); `null` for the OCR path, since a line-item crop has no header block
 - **line_items**: line-level commodity data (descriptions, HTSUS, quantities, duty rates and amounts)
 - **line_item_count**: number of line items
 
-For **`CbpFormType=20` (Canada BSF864)**, `ca_data` uses the native BSF864 shape (`schema_version` 2.0) rather than mirroring the 7501 result:
+For **`CbpFormType=20`** and **`CbpFormType=25`** (Canada BSF864), `ca_data` uses the native BSF864 shape (`schema_version` 2.0) rather than mirroring the 7501 result:
 
 ```json
 {
@@ -203,21 +244,37 @@ Key points:
 ## Processing Flow
 
 ```
-INPUT_QUEUE → download PDF → CbpFormType?
-                              ├─ 10 → parse_7501.parse()
-                              └─ 20 → parse_cad.parse()
-                                    → OUTPUT_QUEUE → ACK
-                  ↓ on failure
-              OUTPUT_QUEUE (status: error) → ACK
+INPUT_QUEUE → download file → CbpFormType?
+                             ├─ 10 → parse_7501.parse()                  (PDF text layer)
+                             ├─ 15 → parse_7501_line_ocr.parse_result()  (local OCR)
+                             ├─ 20 → parse_cad.parse()                   (PDF text layer)
+                             └─ 25 → parse_b3_line_ocr.parse_result()    (local OCR)
+                                   → OUTPUT_QUEUE → ACK
+                 ↓ on failure
+             OUTPUT_QUEUE (status: error) → ACK
 ```
 
 The consumer **ACKs** the original message whether parsing succeeds or fails, preventing task backlog.
+
+Parsers are **not imported at startup**; each is loaded and cached on the first message of
+its type:
+
+- With only the text-layer parsers installed, a `15` / `25` message gets an error reply
+  naming the missing package, and the process keeps running
+- With only the OCR parsers installed the reverse holds, leaving `10` / `20` untouched
+- `parse_7501.py` calls `sys.exit()` when `pdfplumber` is absent; lazy import turns even
+  that into a single-message error instead of a process exit
 
 ## Notes
 
 - Do not commit `.env` (contains secrets); use `.env.example` as a reference only
 - Sample files under `files/input/` and `files/output/` are for local testing
 - The v1 parser handles common 7501 PDF layouts; Canada BSF864 layouts are handled by `parse_cad.py`.
+- `15` / `25` need the extra OCR packages: `rapidocr-onnxruntime`, `onnxruntime`,
+  `opencv-python`, `pillow`, `pymupdf` (see `requirements-ocr.txt`)
+- On the OCR path `header` is `null` and `totals` is summed from the line items: a
+  line-item crop contains neither the header block nor the declaration totals, and the
+  result flags this with `PARTIAL_DOCUMENT` / `DERIVED_VALUE` warnings
 
 ## License
 

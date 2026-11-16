@@ -1,0 +1,33 @@
+# OCR 解析依赖（可选，仅 CbpFormType=15 / 25 需要）
+#
+# 主依赖见 requirements.txt（pika + pdfplumber + PyMuPDF，对应 CbpFormType=10 / 20）。
+# 本文件在它基础上补装 OCR 运行时；两者可分别部署：
+#
+#   仅文字层（10/20）：  pip install -r requirements.txt
+#   文字层 + OCR：       pip install -r requirements.txt -r requirements-ocr.txt
+#   仅 OCR（15/25）：     pip install pika -r requirements-ocr.txt
+#
+# 版本为本机 Python 3.14 实测通过的组合，配合 files/input/ 下的截图语料验证。
+# Python 3.10+ 均可，onnxruntime / rapidocr 都提供多平台预编译 wheel。
+#
+# 说明：consumer.py 延迟导入解析器，缺本文件的依赖只会让 15/25 那一条消息
+# 报错并说明缺的是哪个包，不影响进程启动，也不影响 10/20。
+
+# 本地 OCR 引擎（检测 + 识别），纯 ONNX 推理，不联网、不调外部 API
+# 传递依赖：numpy、onnxruntime、opencv-python、Pillow、pyclipper、PyYAML、Shapely、six
+rapidocr-onnxruntime==1.2.3
+
+# ONNX 运行时 —— rapidocr 的推理后端（上面已作为传递依赖引入，此处显式钉版本）
+onnxruntime==1.31.1
+
+# 图像处理：裁剪、放大、二值化、倾斜校正
+# rapidocr 依赖 opencv，但 OCR 脚本自己也直接用 PIL 做裁剪与放大
+opencv-python==5.0.0.93
+Pillow==13.0.0
+
+# 数值运算：网格线检测、墨迹统计、灰度分析
+numpy==2.5.4
+
+# 图片型 PDF 的栅格化（parse_b3_line_ocr / parse_7501_line_ocr 的 load_page）
+# 与 requirements.txt 中的版本保持一致，避免两个文件同时安装时冲突
+PyMuPDF==1.27.2.3

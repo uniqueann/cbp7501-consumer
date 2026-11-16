@@ -55,6 +55,10 @@ SKEW_RANGE = 2.0      # max rotation corrected, in degrees
 SKEW_STEP = 0.25
 PDF_DPI = 200         # rasterisation resolution for image-only PDF pages
 
+# CbpFormType handled by this parser: 25 = Canada BSF864 line-item screenshot
+# (OCR). Distinct from parse_cad.py's 20, which reads a real PDF text layer.
+CBP_FORM_TYPE = 25
+
 engine = RapidOCR()
 
 
@@ -265,6 +269,20 @@ def reconcile(fields: dict) -> list[tuple[str, float, float, bool]]:
     return [(name, round(expect, 2), printed,
              abs(round(expect, 2) - printed) <= 0.02)
             for name, expect, printed in checks]
+
+
+def parse_result(image_path: str, source: str | None = None) -> dict:
+    """One-call entry point returning the finished parse_cad-shaped result.
+
+    ``parse()`` returns the raw field dump; this wraps it through
+    ``parse_b3_line_schema.build_result`` so callers do not have to know about
+    the two-step split. consumer.py uses this.
+    """
+    fields = parse(image_path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from parse_b3_line_schema import build_result
+
+    return build_result(fields, source=source or Path(image_path).name)
 
 
 def main(argv: list[str]) -> int:
