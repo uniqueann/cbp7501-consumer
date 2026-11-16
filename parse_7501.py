@@ -907,6 +907,122 @@ def _extract_two_col_fields_pymupdf(pdf_path):
     return consignee_name, consignee_street, importer_name, importer_street
 
 
+_NUMBERED_LABEL_RE = re.compile(r"^(\d{1,2})\.$")
+
+
+def _extract_numbered_cells(pdf_path, numbers):
+    """Read consecutive numbered fields by geometry, not by line text.
+
+    Fields 25-28 (or 21-24 on older layouts) share one row whose cells contain
+    a mix of identifiers and free text. A plain line regex cannot split them:
+    ``WAC8 Voyage: 085E`` under field 25 looks exactly like three values, so the
+    voyage number ends up in field 28. Reading the row by x-coordinate keeps each
+    cell separate regardless of what the cells contain.
+
+    pdfplumber supplies the words, matching ``_extract_text``'s preference (it
+    decodes free text better); PyMuPDF is the fallback for PDFs whose pdfplumber
+    text layer is broken (K-1 / L-1).
+
+    Returns ``{field_number: text}``, or None when the labels are not found.
+    """
+    for reader in (_pdfplumber_words, _pymupdf_words):
+        pages = reader(pdf_path)
+        if not pages:
+            continue
+        cells = _cells_from_pages(pages, numbers)
+        if cells is not None:
+            return cells
+    return None
+
+
+def _pdfplumber_words(pdf_path):
+    """Word boxes per page via pdfplumber, in the same shape as PyMuPDF's."""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            return [[(w["x0"], w["top"], w["x1"], w["bottom"], w["text"])
+                     for w in page.extract_words(x_tolerance=2, y_tolerance=2)]
+                    for page in pdf.pages]
+    except Exception:
+        return None
+
+
+def _pymupdf_words(pdf_path):
+    """Word boxes per page via PyMuPDF (x0, top, x1, bottom, text)."""
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return None
+    try:
+        doc = pymupdf.open(pdf_path)
+    except Exception:
+        return None
+    try:
+        return [[(w[0], w[1], w[2], w[3], w[4]) for w in page.get_text("words")]
+                for page in doc]
+    except Exception:
+        return None
+    finally:
+        doc.close()
+
+
+def _cells_from_pages(pages, numbers):
+    """Split the label row for ``numbers`` into cells by label x-coordinate."""
+    first, last = numbers[0], numbers[-1]
+    labels = {f"{n}." for n in numbers}
+
+    for words in pages:
+        # Locate the label row: the two outer labels sharing one baseline.
+        starts = sorted((w[0], w[1]) for w in words if w[4] == f"{first}.")
+        ends = sorted((w[0], w[1]) for w in words if w[4] == f"{last}.")
+        row = next((ya for xa, ya in starts for xb, yb in ends
+                    if abs(ya - yb) <= 2 and xb > xa), None)
+        if row is None:
+            continue
+        top = row
+
+        lefts = {}
+        for w in words:
+            if w[4] in labels and abs(w[1] - top) <= 2:
+                lefts[w[4]] = min(lefts.get(w[4], w[0]), w[0])
+        if len(lefts) != len(numbers):
+            continue
+        columns = [lefts[f"{n}."] for n in numbers]
+
+        # The values sit on the line(s) directly below, so stop at the next
+        # numbered label instead of guessing a fixed row height.
+        bottom = min(
+            (w[1] for w in words
+             if w[1] > top + 2 and _NUMBERED_LABEL_RE.match(w[4])
+             and int(w[4][:-1]) > last),
+            default=top + 20,
+        )
+        bottom = min(bottom, top + 20)
+
+        cells = {n: [] for n in numbers}
+        for w in words:
+            if not top + 2 < w[1] < bottom:
+                continue
+            centre = (w[0] + w[2]) / 2
+            for i, number in enumerate(numbers):
+                right = columns[i + 1] if i + 1 < len(columns) else float("inf")
+                if columns[i] <= centre < right:
+                    cells[number].append((w[0], w[4]))
+                    break
+        return {n: _value_or_blank(" ".join(text for _, text in sorted(cells[n])))
+                for n in numbers}
+    return None
+
+
+def _value_or_blank(text):
+    """Drop the placeholder glyphs a form prints to mean "field not used"."""
+    return "" if text.strip() in _PLACEHOLDER_VALUES else text
+
+
+_PLACEHOLDER_VALUES = {"/", "-", "--", "N/A", "NA"}
+
 
 # ── Header v2 ─────────────────────────────────────────────────────────────────
 
@@ -1072,17 +1188,18 @@ def _parse_header_v2(all_lines, pdf_path):
     if not port_code and us_port:
         port_code = us_port
 
-    # ── Fields 26-28 ──────────────────────────────────────────────────────────
-    # 兼容: "26.Consignee Number" 和 "26. Consignee Number"
-    # C-1 只有 2 个号码 (无 Reference Number)，第三组可选
-    nums = re.search(
-        r"26\.\s*Consignee Number\s+27\.\s*Importer Number\s+28\.\s*Reference Number\s*\n"
-        r"\s*(\S+)\s+(\S+)(?:[ \t]+(\d\S*))?",
-        text
-    )
-    consignee_number = nums.group(1) if nums else ""
-    importer_number  = nums.group(2) if nums else ""
-    raw_ref          = nums.group(3) if nums else ""
+    # ── Fields 25-28 ──────────────────────────────────────────────────────────
+    # 兼容两套编号: 新版 25-28 (25.Location / 26.Consignee / 27.Importer /
+    # 28.Reference) 和旧版 21-24。这些格内既有号码也有自由文本 (如
+    # "WAC8 Voyage: 085E")，纯文本正则会把字段 25 的内容当成 26/27 号，
+    # 把航次号错填到 28.Reference Number，所以按标签横坐标分格读取。
+    cells = _extract_numbered_cells(pdf_path, (25, 26, 27, 28)) \
+        or _extract_numbered_cells(pdf_path, (21, 22, 23, 24)) \
+        or {}
+    consignee_number = cells.get(26, cells.get(22, ""))
+    importer_number  = cells.get(27, cells.get(23, ""))
+    location_of_goods = cells.get(25, cells.get(21, ""))
+    raw_ref          = cells.get(28, cells.get(24, ""))
     # 过滤误匹配（如 "29." 标签）
     reference_number = raw_ref if raw_ref and re.match(r'\d', raw_ref) else ""
 
@@ -1220,7 +1337,7 @@ def _parse_header_v2(all_lines, pdf_path):
         "export_date":             export_date,
         "foreign_port_of_lading":  foreign_port,
         "us_port_of_unlading":     us_port,
-        "location_of_goods":       "",
+        "location_of_goods":       location_of_goods,
         "reference_number":        reference_number,
         "manifest_quantity":       manifest_qty,
         "consignee": {
@@ -1540,8 +1657,9 @@ def _parse_block_v2(lines):
             entry["commodity"]["net_quantity_unit"] = qty_m.group(2)
             continue
 
-        # Commodity label rows (e.g. "OTH, WOOD, FURNITRE, PRTS, OTH")
-        if re.match(r"^[A-Z][A-Z0-9,/\s\-\.]+$", line) and len(line) > 4:
+        # Commodity label rows (e.g. "OTH, WOOD, FURNITRE, PRTS, OTH").
+        # Semicolons and ampersands occur too ("GYM/PLAYGRND EQUIP;EXER. CYCLE").
+        if re.match(r"^[A-Z][A-Z0-9,/;&\s\-\.]+$", line) and len(line) > 4:
             commodity_desc_candidate = line
             continue
 
