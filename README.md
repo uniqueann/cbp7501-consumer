@@ -9,18 +9,38 @@ CBP Form 7501（美国海关进口报关单）与加拿大 CBSA BSF864 PDF 解�
 - **RabbitMQ 消费者**（`consumer.py`）：异步处理解析任务，支持并发、断线重连与错误回传；按 `CbpFormType` 路由解析器
 - **PDF 解析器 v1**（`parse_7501.py`）：`CbpFormType=10`（默认），针对常见 7501 版式提取表头、行项目、HTSUS、关税等信息
 - **加拿大解析器**（`parse_cad.py`）：`CbpFormType=20`，解析 CBSA BSF864，输出 BSF864 原生结构（`schema_version` 2.0），金额单位 CAD
+- **美国行项目 OCR**（`parse_7501_line_ocr.py`）：`CbpFormType=15`，解析 7501 行项目区截图（无文字层），本地 OCR + 算术校验
+- **加拿大行项目 OCR**（`parse_b3_line_ocr.py`）：`CbpFormType=25`，解析 BSF864 行项目区截图（无文字层），本地 OCR + 算术校验
+
+### CbpFormType 一览
+
+| 值 | 单据 | 输入 | 解析器 | 输出键 |
+|---|---|---|---|---|
+| `10` | 美国 CBP 7501 | 带文字层 PDF | `parse_7501.py` | `us_data` |
+| `15` | 美国 CBP 7501 | 图片 / 无文字层 PDF | `parse_7501_line_ocr.py` | `us_data` |
+| `20` | 加拿大 CBSA BSF864 | 带文字层 PDF | `parse_cad.py` | `ca_data` |
+| `25` | 加拿大 CBSA BSF864 | 图片 / 无文字层 PDF | `parse_b3_line_ocr.py` | `ca_data` |
+
+`15` / `25` 是 `10` / `20` 的 OCR 版本，**输出键与各自的文字层版本一致**，
+所以下游按 `us_data` / `ca_data` 绑定时两种来源可以互换。
+
+所有解析器都是**首次使用时才导入**：只部署文字层解析器时不需要安装 OCR 依赖；
+反之亦然。缺少依赖只会让对应类型的那条消息报错，不会影响进程启动。
 
 ## 项目结构
 
 ```
 cbp7501-consumer/
-├── consumer.py          # RabbitMQ 消费者入口
-├── parse_7501.py        # 7501 PDF 解析器（CbpFormType=10）
-├── parse_cad.py         # 加拿大 BSF864 解析器（CbpFormType=20）
-├── .env.example         # 环境变量示例
+├── consumer.py              # RabbitMQ 消费者入口
+├── parse_7501.py            # 7501 PDF 解析器（CbpFormType=10）
+├── parse_cad.py             # 加拿大 BSF864 解析器（CbpFormType=20）
+├── parse_7501_line_ocr.py   # 7501 行项目 OCR 解析器（CbpFormType=15）
+├── parse_b3_line_ocr.py     # BSF864 行项目 OCR 解析器（CbpFormType=25）
+├── parse_b3_line_schema.py  # OCR 结果整形为 BSF864 schema 2.0（供 25 使用）
+├── .env.example             # 环境变量示例
 ├── files/
-│   ├── input/           # 本地测试用 PDF / JSON 样例
-│   └── output/          # 本地解析结果样例
+│   ├── input/               # 本地测试用 PDF / 图片样例
+│   └── output/              # 本地解析结果样例
 └── README.md
 ```
 
@@ -28,12 +48,29 @@ cbp7501-consumer/
 
 - Python 3.10+
 - RabbitMQ（运行 consumer 时需要）
+- OCR 依赖（仅 `CbpFormType=15` / `25` 需要）
 
 ## 安装
 
+依赖拆成两个文件，可以只装需要的那部分：
+
+| 部署场景 | 安装命令 | 可处理的类型 |
+|---|---|---|
+| 仅文字层（体积小） | `pip install -r requirements.txt` | `10` / `20` |
+| 文字层 + OCR | `pip install -r requirements.txt -r requirements-ocr.txt` | `10` / `15` / `20` / `25` |
+| 仅 OCR | `pip install pika -r requirements-ocr.txt` | `15` / `25` |
+
 ```bash
-pip install -r requirements.txt
+# 典型：完整部署
+pip install -r requirements.txt -r requirements-ocr.txt
 ```
+
+- `requirements.txt`：`pika`、`pdfplumber`、`PyMuPDF`（文字层解析）
+- `requirements-ocr.txt`：`rapidocr-onnxruntime`、`onnxruntime`、`opencv-python`、`Pillow`、`numpy`、`PyMuPDF`
+
+两者只共享 `PyMuPDF`，版本已对齐。OCR 依赖体积较大（约 150 MB），不需要
+`15` / `25` 时可完全不装 —— `consumer.py` 延迟导入解析器，缺少时只会让对应
+类型的那条消息报错并说明缺哪个包，进程与其它三种类型不受影响。
 
 复制环境变量模板并按需修改：
 
@@ -100,13 +137,13 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `ID` | 是 | 任务 ID，原样回传 |
-| `URL` | 是 | PDF 下载地址（支持预签名 OBS 链接） |
+| `URL` | 是 | 文件下载地址（支持预签名 OBS 链接）；`15` / `25` 可指向图片或图片型 PDF |
 | `FileNumber` | 否 | 业务单号，出错时一并回传 |
-| `CbpFormType` | 否 | 整型：`10` 美国整柜（默认），`20` 加拿大整柜 |
+| `CbpFormType` | 否 | 整型（也接受纯数字字符串）：`10` 美国整柜（默认）、`15` 美国行项目截图、`20` 加拿大整柜、`25` 加拿大行项目截图 |
 
 ### 输出队列（`OUTPUT_QUEUE`）
 
-成功消息的解析结果按 `CbpFormType` 命名：类型 10 用 `us_data`，类型 20 用 `ca_data`，**只出现匹配的那一个键**。
+成功消息的解析结果按**单据国别**命名：美国单据（`10` / `15`）用 `us_data`，加拿大单据（`20` / `25`）用 `ca_data`，**只出现匹配的那一个键**。
 
 **成功（`CbpFormType=10`）：**
 
@@ -202,21 +239,35 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 ## 处理流程
 
 ```
-INPUT_QUEUE → 下载 PDF → CbpFormType?
-                              ├─ 10 → parse_7501.parse()
-                              └─ 20 → parse_cad.parse()
-                                    → OUTPUT_QUEUE → ACK
-                  ↓ 失败
-              OUTPUT_QUEUE（status: error）→ ACK
+INPUT_QUEUE → 下载文件 → CbpFormType?
+                          ├─ 10 → parse_7501.parse()           （PDF 文字层）
+                          ├─ 15 → parse_7501_line_ocr.parse_result()  （本地 OCR）
+                          ├─ 20 → parse_cad.parse()            （PDF 文字层）
+                          └─ 25 → parse_b3_line_ocr.parse_result()    （本地 OCR）
+                                → OUTPUT_QUEUE → ACK
+              ↓ 失败
+          OUTPUT_QUEUE（status: error）→ ACK
 ```
 
 无论成功或失败，消费者都会对原消息执行 **ACK**，避免任务堆积。
+
+解析器**不在启动时导入**，而是在收到对应类型的首条消息时才加载并缓存：
+
+- 只部署文字层解析器（`pika` + `pdfplumber` + `PyMuPDF`）时，收到 `15` / `25` 会回一条
+  错误消息，说明缺少哪个依赖，进程继续运行
+- 只部署 OCR 解析器时同理，不影响 `10` / `20`
+- `parse_7501.py` 缺 `pdfplumber` 时会调 `sys.exit()`，延迟导入把这种情况也变成
+  单条消息的错误而不是进程退出
 
 ## 注意事项
 
 - 请勿将 `.env`（含真实密码）提交到版本库；`.env.example` 仅作参考
 - `files/input/`、`files/output/` 下的样例文件仅供本地测试
 - v1 解析器针对常见 PDF 版式做了兼容；如遇不同版式，可在本地调整或扩展解析规则
+- `15` / `25` 需要额外安装 OCR 依赖（在独立 venv 中）：
+  `rapidocr-onnxruntime`、`onnxruntime`、`opencv-python`、`pillow`、`pymupdf`
+- OCR 路径的 `header` 为 `null`、`totals` 为行项目汇总值：行项目截图本身不含
+  表头与申报级总计，结果中的 `warnings` 会以 `PARTIAL_DOCUMENT` / `DERIVED_VALUE` 标明
 
 ## 许可证
 

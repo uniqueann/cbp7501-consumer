@@ -11,16 +11,24 @@ Consumes messages from INPUT_QUEUE, each message is JSON:
     }
 
 CbpFormType (optional, default 10):
-    10 — U.S. full container (CBP Form 7501) → parse_7501.parse()
-    20 — Canada full container (CBSA BSF864) → parse_cad.parse()
+    10 — U.S. full container (CBP Form 7501)          → parse_7501.parse()
+         PDF with a real text layer.
+    15 — U.S. 7501 line-item screenshot               → parse_7501_line_ocr.parse_result()
+         Raster image / image-only PDF, parsed by local OCR.
+    20 — Canada full container (CBSA BSF864)          → parse_cad.parse()
+         PDF with a real text layer.
+    25 — Canada BSF864 line-item screenshot           → parse_b3_line_ocr.parse_result()
+         Raster image / image-only PDF, parsed by local OCR.
 
 For each message:
   1. Download the PDF from URL (pre-signed OBS link, no auth header needed)
   2. Parse with the parser selected by CbpFormType
   3. Publish result to OUTPUT_QUEUE, echoing ID / FileNumber / CbpFormType.
-     On success the parsed payload is keyed by the form type it came from:
+     On success the parsed payload is keyed by the form type family it came from:
      {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "ok", "us_data": { ...parsed... }}
+     {"ID": 1, "FileNumber": "...", "CbpFormType": 15, "status": "ok", "us_data": { ...parsed... }}
      {"ID": 1, "FileNumber": "...", "CbpFormType": 20, "status": "ok", "ca_data": { ...parsed... }}
+     {"ID": 1, "FileNumber": "...", "CbpFormType": 25, "status": "ok", "ca_data": { ...parsed... }}
      or on error:
      {"ID": 1, "FileNumber": "...", "CbpFormType": 10, "status": "error", "message": "..."}
   4. ack the original message
@@ -36,12 +44,14 @@ Environment variables (put in .env or export before running):
     PREFETCH_COUNT  messages in-flight at once          (default: 4)
 """
 
+import importlib
 import json
 import logging
 import os
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -49,10 +59,37 @@ import pika
 
 # ── make parsers importable whether running from repo root or here ─────────────
 sys.path.insert(0, str(Path(__file__).parent))
-# FORM_TYPE_* come from the parsers themselves so each form type has a single
-# source of truth (parse_7501 → 10, parse_cad → 20).
-from parse_7501 import CBP_FORM_TYPE as FORM_TYPE_US, parse as parse_pdf
-from parse_cad import CBP_FORM_TYPE as FORM_TYPE_CA, parse as parse_cad_pdf
+
+# CbpFormType values. 10/20 read a PDF text layer, 15/25 run local OCR on a raster
+# image or an image-only PDF. 15 is the OCR path for the same U.S. 7501 form as 10,
+# and 25 the OCR path for the same BSF864 form as 20.
+#
+# These mirror each parser's own ``CBP_FORM_TYPE`` constant. The numbers are
+# restated here (not imported) because the parsers are loaded lazily -- see below --
+# and tests/test_consumer_form_types.py pins them so the two cannot drift apart.
+FORM_TYPE_US      = 10     # parse_7501.py            (U.S. 7501, text layer)
+FORM_TYPE_CA      = 20     # parse_cad.py             (CBSA BSF864, text layer)
+FORM_TYPE_US_OCR  = 15     # parse_7501_line_ocr.py   (U.S. 7501, screenshot)
+FORM_TYPE_CA_OCR  = 25     # parse_b3_line_ocr.py     (CBSA BSF864, screenshot)
+
+# form type -> (module name, callable name, output envelope key). Every parser
+# family maps an OCR variant onto its text-layer sibling's payload key, so
+# downstream code binding ``us_data`` / ``ca_data`` stays interchangeable.
+_PARSERS = {
+    FORM_TYPE_US:     ("parse_7501",          "parse",        "us_data"),
+    FORM_TYPE_CA:     ("parse_cad",           "parse",        "ca_data"),
+    FORM_TYPE_US_OCR: ("parse_7501_line_ocr", "parse_result", "us_data"),
+    FORM_TYPE_CA_OCR: ("parse_b3_line_ocr",   "parse_result", "ca_data"),
+}
+
+# The parsers are imported on first use, never at startup. Two reasons:
+#   * their dependency sets barely overlap -- the text-layer parsers need
+#     pdfplumber / PyMuPDF, the OCR parsers need rapidocr-onnxruntime / onnxruntime
+#     / opencv -- and a deployment may only have one of the two;
+#   * parse_7501.py calls sys.exit() when pdfplumber is missing, so importing it at
+#     module load would kill the consumer before it could ever serve a 15/25 message.
+# A missing dependency now surfaces as a per-message error naming the form type.
+_PARSER_CACHE: dict[int, object] = {}
 
 # ── logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -72,8 +109,11 @@ INPUT_QUEUE    = os.environ.get("INPUT_QUEUE",  "cbp7501.parse.request")
 OUTPUT_QUEUE   = os.environ.get("OUTPUT_QUEUE", "cbp7501.parse.result")
 PREFETCH_COUNT = int(os.environ.get("PREFETCH_COUNT", "4"))
 
-# FORM_TYPE_US / FORM_TYPE_CA are imported from parse_7501 / parse_cad above.
-_SUPPORTED_FORM_TYPES = (FORM_TYPE_US, FORM_TYPE_CA)
+# All four form types are usable; each is validated on arrival.
+_SUPPORTED_FORM_TYPES = tuple(_PARSERS)
+
+# Which output envelope key each form type reports under.
+_DATA_KEYS = {form_type: data_key for form_type, (_m, _f, data_key) in _PARSERS.items()}
 
 
 def _resolve_form_type(payload: dict) -> int:
@@ -105,6 +145,52 @@ def download_pdf(url: str, dest: str, timeout: int = 60) -> None:
             f.write(chunk)
 
 
+def _load_parser(form_type: int):
+    """Import (once) and return the parser callable for a form type.
+
+    Import failures are turned into a RuntimeError naming the form type and the
+    missing package, so the operator sees which deployment dependency is absent
+    instead of a bare ImportError or an exit from deep inside a parser module.
+    """
+    if form_type in _PARSER_CACHE:
+        return _PARSER_CACHE[form_type]
+    module_name, callable_name, _data_key = _PARSERS[form_type]
+    try:
+        module = importlib.import_module(module_name)
+    except (ImportError, SystemExit) as e:
+        # parse_7501.py calls sys.exit(1) when pdfplumber is missing, hence SystemExit.
+        detail = getattr(e, "code", None) or str(e) or "dependency missing"
+        raise RuntimeError(
+            f"CbpFormType={form_type} needs parser '{module_name}', which could not "
+            f"be loaded ({detail}). Install its dependencies -- text-layer parsers "
+            "need pdfplumber/PyMuPDF, OCR parsers need rapidocr-onnxruntime, "
+            "onnxruntime, opencv-python and pillow."
+        ) from None
+    parser = getattr(module, callable_name, None)
+    if parser is None:
+        raise RuntimeError(
+            f"Parser module '{module_name}' has no {callable_name}() function; "
+            "the deployment has a mismatched version of this file."
+        )
+    _PARSER_CACHE[form_type] = parser
+    return parser
+
+
+def parse_document(form_type: int, path: str, source: str | None = None) -> dict:
+    """Parse *path* with the parser belonging to *form_type*.
+
+    10 / 20 read the PDF text layer; 15 / 25 run the local-OCR parsers on a raster
+    image (or an image-only PDF). The OCR parsers expose ``parse_result()``, the
+    text-layer ones ``parse()``; either way exactly one dict comes back.
+    """
+    if form_type not in _PARSERS:
+        raise ValueError(f"Unsupported CbpFormType: {form_type}")
+    parser = _load_parser(form_type)
+    if form_type in (FORM_TYPE_US_OCR, FORM_TYPE_CA_OCR):
+        return parser(path, source=source)
+    return parser(path)
+
+
 def declare_queues(channel: pika.adapters.blocking_connection.BlockingChannel) -> None:
     for q in (INPUT_QUEUE, OUTPUT_QUEUE):
         channel.queue_declare(queue=q, durable=True)
@@ -127,6 +213,11 @@ def on_message(channel, method, properties, body):
         form_type     = FORM_TYPE_US if raw_form_type in (None, "") else raw_form_type
         url           = payload["URL"]
         form_type     = _resolve_form_type(payload)
+        # ``source`` lets the OCR parsers record a human-readable name in their
+        # IMAGE_ONLY_SOURCE warning. The downloaded temp file is named after the
+        # form type and message id, so the original URL's basename is used when
+        # there is one and the message id otherwise.
+        source_name = Path(urllib.parse.urlsplit(url).path).name or f"ID{msg_id}"
         log.info(
             "Received ID=%s  FileNumber=%s  CbpFormType=%s  URL=%s…",
             msg_id, file_number, form_type, url[:80],
@@ -139,17 +230,14 @@ def on_message(channel, method, properties, body):
         log.info("Downloaded %d bytes → %s", Path(tmp_pdf).stat().st_size, tmp_pdf)
 
         # 2. Parse
-        if form_type == FORM_TYPE_US:
-            result = parse_pdf(tmp_pdf)
-        else:
-            result = parse_cad_pdf(tmp_pdf)
+        result = parse_document(form_type, tmp_pdf, source=source_name)
         log.info("Parsed %d line items", result.get("line_item_count", 0))
 
         # 3. Publish result
-        # The payload key names the form type it came from (us_data / ca_data) so
-        # consumers can bind the field without first testing CbpFormType. Only the
-        # matching key is present; the other one is omitted entirely.
-        data_key = "us_data" if form_type == FORM_TYPE_US else "ca_data"
+        # The payload key names the form family it came from (us_data / ca_data)
+        # so consumers can bind the field without first testing CbpFormType. Only
+        # the matching key is present; the other one is omitted entirely.
+        data_key = _DATA_KEYS[form_type]
         out_msg = json.dumps(
             {
                 "ID":           msg_id,
@@ -174,6 +262,10 @@ def on_message(channel, method, properties, body):
     except KeyError as e:
         _publish_error(channel, msg_id, file_number, form_type, f"Missing field in message: {e}")
     except ValueError as e:
+        _publish_error(channel, msg_id, file_number, form_type, str(e))
+    except RuntimeError as e:
+        # Raised when an OCR parser's dependencies are missing; the message is
+        # already self-explanatory and naming the form type helps the operator.
         _publish_error(channel, msg_id, file_number, form_type, str(e))
     except urllib.error.URLError as e:
         _publish_error(channel, msg_id, file_number, form_type, f"Download failed: {e}")
