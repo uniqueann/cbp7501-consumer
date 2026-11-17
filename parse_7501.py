@@ -12,6 +12,7 @@ If output path is omitted, prints JSON to stdout.
 import sys
 import re
 import json
+from decimal import Decimal, InvalidOperation
 
 try:
     import pdfplumber
@@ -55,7 +56,14 @@ SKIP_PREFIXES = ("32.", "27.", "Line", "29.", "A.HTSUS", "B.AD/CVD", "C $")
 #   旧版：001 HUMIDIFIERS,EVAPORATIVE  （无前缀，直接是商品描述）
 # 匹配 001-999，后接大写字母开头的描述（排除 499/501 等 fee 行）
 LINE_START_RE = re.compile(r"^(0\d{2}|[1-9]\d{2})\s+([A-Z].+)")
-MANIFEST_RE   = re.compile(r"^([\d,]+)\s+(CTN|PCS|PKG|KG|LB)$", re.I)
+# A manifest row reads "887 CTN" / "65 CTN" / "365 CTNS" / "5133 KG". The unit may
+# be plural, so an optional trailing "S" is accepted. "NO" (number of pieces, the
+# HTSUS net unit) is deliberately NOT in this list: a "10 NO" line sits INSIDE a
+# block as the net quantity, and matching it here would make the block parser skip
+# that quantity -- which it did before this list was made explicit.
+MANIFEST_UNITS = ("CTN", "CARTON", "PCS", "PKG", "PLT", "KG", "LB")
+MANIFEST_RE = re.compile(
+    r"^([\d,]+)\s+(" + "|".join(MANIFEST_UNITS) + r")S?$", re.I)
 # 格式A（旧版）：HTSUS  grossKG  netQty  unit  $value  rate  $duty
 # net_quantity 可能含逗号，如 3,465.00
 COMMODITY_RE = re.compile(
@@ -266,6 +274,46 @@ def _money(s: str | None) -> float | str | None:
         return float(s)
     except ValueError:
         return s
+
+
+def format_net_quantity(quantity, unit) -> str | None:
+    """Render a line's Net Quantity in HTSUS Units the way the form prints it.
+
+    The declaration prints this column as "420.00 NO" / "41.33 DOZ" / "477.36 KG":
+    two decimals and the HTSUS unit code. line_items[].manifest_note carries this
+    string, so downstream code can read the per-line quantity without joining two
+    fields itself.
+
+    Returns None when either half is missing -- a line whose quantity could not be
+    read must not borrow a neighbour's value or invent "0.00".
+    """
+    if quantity is None or not unit:
+        return None
+    try:
+        return f"{Decimal(str(quantity)):.2f} {str(unit).strip()}"
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def normalise_manifest_quantity(raw: str | None) -> str:
+    """Normalise a printed package count to "<qty> CTN".
+
+    Declarations spell the same figure several ways: the carton unit as
+    "CT" (B-1), "CTN" (A-1, H-1, ...) or "CTNS" (C-1, K-1, ...), and the same
+    count as "PCS" (HAMU2014380) or "PKG" on other batches. The quantity is what
+    matters downstream, so every package unit is canonicalised to CTN instead of
+    leaving the printer's abbreviation in the field.
+
+    The digits are kept exactly as printed, including any thousands separator
+    ("1,320 CTN"), and an empty/absent value stays "". A unit this function does
+    not know ("KG", a weight) passes through untouched rather than being relabelled
+    as cartons.
+    """
+    if not raw:
+        return ""
+    match = re.match(r"\s*(\d[\d,]*)\s*(?:CT|CTN|CTNS|PCS|PKG|PKGS)\s*$",
+                     str(raw), re.I)
+    return f"{match.group(1)} CTN" if match else str(raw).strip()
 
 
 def _extract_text(pdf_path: str) -> list[str]:
@@ -610,8 +658,10 @@ def _parse_header(all_lines: list[str], _page0_words: list = None) -> dict:
     reference     = ""
 
     # ── manifest quantity
-    manifest_m  = re.search(r"([\d,]+\s+CTN)", text)
-    manifest    = manifest_m.group(1) if manifest_m else ""
+    # Same rule as the v2 path: any digit count, optional thousands separator, and
+    # any package unit (CT / CTN / CTNS / PCS / PKG) normalised to CTN.
+    manifest_m  = re.search(r"(\d[\d,]*\s+(?:CTN?S?|CT|PKGS?|PCS))\b", text)
+    manifest    = normalise_manifest_quantity(manifest_m.group(1)) if manifest_m else ""
 
     # ── 行15：KBJ TRADING LLC  WUHAN JIU ZHOU TONG TRADING CO,.
     # 行16：Street: LIN LI...  Street: NO.95...
@@ -1229,9 +1279,15 @@ def _parse_header_v2(all_lines, pdf_path):
     customer_ref = _find(r"Customer Reference\s*#\s*(\S+)")
 
     # ── Manifest Quantity ─────────────────────────────────────────────────────
-    manifest_qty = _find(r"\b(\d{3,}\s+CTN?S?)\b")
-    if not manifest_qty:
-        manifest_qty = _find(r"\b(\d{3,}\s+PCS)\b")
+    # Package counts can be one digit ("29 CTN") or thousands ("1,320 CTN"), so the
+    # digits are matched with an optional thousands separator. An earlier form of
+    # this pattern required three plain digits, which dropped two-box-count
+    # declarations and truncated "1,320 CTN" to "320 CTN".
+    # The unit may be CT / CTN / CTNS / PCS / PKG on different batches; all of them
+    # are canonicalised to CTN by normalise_manifest_quantity(). Weights (KG) are
+    # deliberately not in this list.
+    manifest_qty = normalise_manifest_quantity(
+        _find(r"\b(\d[\d,]*\s+(?:CTN?S?|CT|PKGS?|PCS))\b"))
 
     # ── Totals ────────────────────────────────────────────────────────────────
     # Entered value
@@ -1406,6 +1462,13 @@ def _split_blocks_v2(all_lines):
             if _ADDRESS_RE.match(line):
                 i += 1
                 continue
+            # A manifest row (“65 CTN” / “772 CTN”) prints directly ABOVE the line it
+            # belongs to, so pull it into the block. Without this it sits outside
+            # every block and the box count is silently dropped -- which is what
+            # happened on TGBU8030959, CMAU4603291, J-1, H-1 and G-1.
+            start = i
+            if i > start_idx and MANIFEST_RE.match(all_lines[i - 1].strip()):
+                start = i - 1
             j = i + 1
             while j < len(all_lines):
                 nxt = all_lines[j].strip()
@@ -1421,7 +1484,7 @@ def _split_blocks_v2(all_lines):
                         continue
                     break
                 j += 1
-            blocks.append(all_lines[i:j])
+            blocks.append(all_lines[start:j])
             i = j
         else:
             i += 1
@@ -1431,7 +1494,25 @@ def _split_blocks_v2(all_lines):
 # ── Block parser v2 ───────────────────────────────────────────────────────────
 
 def _parse_block_v2(lines):
+    # A manifest row ("65 CTN" / "772 CTN") may lead the block after
+    # _split_blocks_v2 pulled it in. It has to be recognised before ITEM_START_RE
+    # gets a chance to read it as a line item: "772 CTN" matches that pattern too
+    # (3 digits + text), which is how a 3-digit box count used to be mistaken for
+    # line 772. The row is consumed only when the line after it really is an item,
+    # so a stray manifest row left alone in a block cannot swallow the block.
+    manifest_note = None
     first = lines[0].strip()
+    body_from = 1
+    if MANIFEST_RE.match(first) and len(lines) > 1:
+        candidate = lines[1].strip()
+        cm = ITEM_START_RE.match(candidate)
+        if cm is not None and int(cm.group(1)) not in _FEE_CODES:
+            # Same canonical form as header.manifest_quantity, so the two never
+            # disagree on the unit for one declaration.
+            manifest_note = normalise_manifest_quantity(first)
+            first = candidate
+            body_from = 2
+
     m = ITEM_START_RE.match(first)
     if not m:
         return None
@@ -1440,7 +1521,7 @@ def _parse_block_v2(lines):
     entry = {
         "line_no":            m.group(1),
         "line_type":          "STANDARD",
-        "manifest_note":      None,
+        "manifest_note":      manifest_note,
         "exclusion_note":     desc,
         "tariff_subheadings": [],
         "commodity":          {},
@@ -1448,7 +1529,7 @@ def _parse_block_v2(lines):
     }
     commodity_desc_candidate = ""
 
-    for raw in lines[1:]:
+    for raw in lines[body_from:]:
         line = raw.strip()
         if not line:
             continue
@@ -1459,6 +1540,11 @@ def _parse_block_v2(lines):
         if re.match(r"^[a-zA-Z]$", line):  # single stray char
             continue
         if re.match(r"^C\d{3,}$", line):   # C739, C887 codes
+            continue
+
+        # A leading manifest row (already recorded as manifest_note) must not be
+        # re-read as merchandise text.
+        if MANIFEST_RE.match(line):
             continue
 
         # D-1: skip "Invoice XXX" lines, "Not Related", BL/HBL lines, annotation lines
@@ -1699,6 +1785,15 @@ def parse(pdf_path: str) -> dict:
             and item["conversion_currency"] == header["currency"]
             and item["exchange_rate"] in (None, 1.0)):
             item["value_for_currency_conversion"] = item["commodity"].get("entered_value")
+        # manifest_note carries the line's Net Quantity in HTSUS Units exactly as
+        # printed ("420.00 NO", "41.33 DOZ"), which is what downstream reads per
+        # line. It is derived from the parsed quantity rather than from a loose
+        # text match so v1 and v2 agree, and so a line whose quantity could not be
+        # read reports None instead of borrowing another line's value.
+        item["manifest_note"] = format_net_quantity(
+            item["commodity"].get("net_quantity"),
+            item["commodity"].get("net_quantity_unit"),
+        )
 
     # 新判定规则：只要 grand_total_usd 不为 None 就算成功
     totals = header.get("totals", {})

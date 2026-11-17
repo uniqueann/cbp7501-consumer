@@ -266,6 +266,19 @@ def quantity(text: str) -> tuple[float | None, str | None]:
     return money(match.group(1)), unit
 
 
+def format_net_quantity(qty: float | None, unit: str | None) -> str | None:
+    """Render a line's Net Quantity in HTSUS Units as the form prints it.
+
+    Same contract as parse_7501.format_net_quantity (which cannot be imported
+    here: it pulls in pdfplumber). Two decimals plus the HTSUS unit code, e.g.
+    "420.00 NO". Returns None when either half is missing, so an unreadable
+    quantity never becomes "0.00".
+    """
+    if qty is None or not unit:
+        return None
+    return f"{Decimal(str(qty)):.2f} {str(unit).strip()}"
+
+
 def normalise_rate(text: str) -> str | None:
     """Return 'FREE' or 'NN%' from a rate cell."""
     token = text.strip().upper().replace(" ", "")
@@ -498,7 +511,11 @@ def parse_block(block: dict) -> dict:
     item = {
         "line_no": block["line_no"],
         "line_type": "STANDARD",
-        "manifest_note": None,
+        # Same meaning as in parse_7501.py: this line's Net Quantity in HTSUS Units,
+        # rendered as "<qty> <unit>" ("420.00 NO"). Derived from the parsed
+        # quantity so both parsers agree; None when the quantity is unreadable.
+        "manifest_note": format_net_quantity(
+            commodity.get("net_quantity"), commodity.get("net_quantity_unit")),
         "exclusion_note": exclusion_note,
         "relationship": relationship,
         "tariff_subheadings": subheadings,
