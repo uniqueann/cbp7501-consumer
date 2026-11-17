@@ -1,4 +1,6 @@
 import ast
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -164,6 +166,150 @@ class StartupImportTests(unittest.TestCase):
         for module_name in ("parse_7501_line_ocr", "parse_b3_line_ocr"):
             with self.subTest(module=module_name):
                 self.assertNotIn(module_name, vars(consumer))
+
+
+class UrlSuffixTests(unittest.TestCase):
+
+    def test_reads_the_extension_from_the_path(self):
+        for url, expected in (
+            ("https://x/a.pdf", ".pdf"),
+            ("https://x/a.PDF", ".pdf"),
+            ("https://x/dir.d/a.jpg", ".jpg"),
+            ("https://x/a.png", ".png"),
+            ("https://x/a", ""),
+            ("https://x/a/", ""),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(consumer._url_suffix(url), expected)
+
+    def test_ignores_the_query_string_of_a_presigned_link(self):
+        # A dot inside the signature must not be taken for an extension.
+        url = ("https://obs.example.com/qa/7501.pdf"
+               "?X-Amz-Signature=abc.def&X-Amz-Credential=ghi")
+        self.assertEqual(consumer._url_suffix(url), ".pdf")
+
+    def test_ignores_the_fragment(self):
+        self.assertEqual(consumer._url_suffix("https://x/a.pdf#page=2"), ".pdf")
+
+
+class ResolveParserTypeTests(unittest.TestCase):
+    """CbpFormType=15 falls back to the text-layer parser when a PDF is delivered."""
+
+    def test_pdf_url_reroutes_15_to_the_text_layer_parser(self):
+        for url in ("https://x/a.pdf", "https://x/a.PDF",
+                    "https://x/a.pdf?X-Amz-Signature=s"):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    consumer.resolve_parser_type(consumer.FORM_TYPE_US_OCR, url),
+                    consumer.FORM_TYPE_US,
+                )
+
+    def test_raster_url_keeps_15_on_the_ocr_parser(self):
+        for url in ("https://x/a.jpg", "https://x/a.JPG",
+                    "https://x/a.png", "https://x/a.jpeg", "https://x/a.webp"):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    consumer.resolve_parser_type(consumer.FORM_TYPE_US_OCR, url),
+                    consumer.FORM_TYPE_US_OCR,
+                )
+
+    def test_other_form_types_are_never_rerouted(self):
+        # 10/20 already expect a text layer, and a caller asking for 25 wants OCR.
+        for form_type in (consumer.FORM_TYPE_US, consumer.FORM_TYPE_CA,
+                          consumer.FORM_TYPE_CA_OCR):
+            for url in ("https://x/a.pdf", "https://x/a.jpg", "https://x/a"):
+                with self.subTest(form_type=form_type, url=url):
+                    self.assertEqual(consumer.resolve_parser_type(form_type, url),
+                                     form_type)
+
+    def test_extensionless_url_falls_back_to_magic_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = Path(tmp, "noext")
+            pdf.write_bytes(b"%PDF-1.7\n%...\n")
+            self.assertEqual(
+                consumer.resolve_parser_type(consumer.FORM_TYPE_US_OCR,
+                                             "https://x/download", str(pdf)),
+                consumer.FORM_TYPE_US,
+            )
+
+            img = Path(tmp, "noext2")
+            img.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+            self.assertEqual(
+                consumer.resolve_parser_type(consumer.FORM_TYPE_US_OCR,
+                                             "https://x/download", str(img)),
+                consumer.FORM_TYPE_US_OCR,
+            )
+
+    def test_extensionless_url_without_a_file_keeps_ocr(self):
+        self.assertEqual(
+            consumer.resolve_parser_type(consumer.FORM_TYPE_US_OCR,
+                                         "https://x/download"),
+            consumer.FORM_TYPE_US_OCR,
+        )
+
+    def test_magic_byte_probe_does_not_trust_a_bare_match_far_into_the_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "f")
+            path.write_bytes(b"<html>" + b"x" * 100 + b"%PDF-")
+            self.assertFalse(consumer._looks_like_pdf(str(path)))
+
+    def test_tolerates_a_utf8_bom_before_the_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "f")
+            path.write_bytes(b"\xef\xbb\xbf%PDF-1.4\n")
+            self.assertTrue(consumer._looks_like_pdf(str(path)))
+
+    def test_missing_file_is_not_a_pdf(self):
+        self.assertFalse(consumer._looks_like_pdf("/nonexistent/file"))
+
+
+class RerouteEnvelopeTests(unittest.TestCase):
+    """A rerouted 15 must keep CbpFormType=15 and the us_data key in the reply."""
+
+    def setUp(self):
+        consumer._PARSER_CACHE.clear()
+
+    def tearDown(self):
+        consumer._PARSER_CACHE.clear()
+
+    def _run(self, url):
+        published = []
+
+        class Channel:
+            def basic_publish(self, exchange, routing_key, body, properties):
+                published.append(json.loads(body.decode()))
+
+            def basic_ack(self, delivery_tag):
+                pass
+
+        class Method:
+            delivery_tag = 1
+
+        payload = {"ID": 9, "FileNumber": "F", "URL": url, "CbpFormType": 15}
+
+        def fake_download(url_, dest, timeout=60):
+            Path(dest).write_bytes(b"%PDF-1.4 fake")
+
+        with patch.object(consumer, "download_pdf", side_effect=fake_download), \
+             patch.object(consumer, "parse_document",
+                          side_effect=lambda ft, path, source=None:
+                          {"line_item_count": 0, "parser_type_used": ft}):
+            consumer.on_message(Channel(), Method(), None, json.dumps(payload).encode())
+
+        return published[0]
+
+    def test_pdf_payload_publishes_us_data_and_echoes_the_requested_type(self):
+        msg = self._run("https://x/a.pdf")
+        self.assertEqual(msg["CbpFormType"], 15)      # caller's value, not 10
+        self.assertIn("us_data", msg)
+        self.assertNotIn("ca_data", msg)
+        self.assertEqual(msg["us_data"]["parser_type_used"], consumer.FORM_TYPE_US)
+
+    def test_raster_payload_uses_the_ocr_parser(self):
+        msg = self._run("https://x/a.jpg")
+        self.assertEqual(msg["CbpFormType"], 15)
+        self.assertEqual(msg["us_data"]["parser_type_used"],
+                         consumer.FORM_TYPE_US_OCR)
 
 
 if __name__ == "__main__":

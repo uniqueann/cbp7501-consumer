@@ -112,8 +112,65 @@ PREFETCH_COUNT = int(os.environ.get("PREFETCH_COUNT", "4"))
 # All four form types are usable; each is validated on arrival.
 _SUPPORTED_FORM_TYPES = tuple(_PARSERS)
 
+# Extensions treated as "a PDF was delivered". A pre-signed OBS link keeps the real
+# filename in the path and the signature in the query string, so the query has to be
+# dropped before the extension is read (see _url_suffix).
+PDF_SUFFIXES = (".pdf",)
+
 # Which output envelope key each form type reports under.
 _DATA_KEYS = {form_type: data_key for form_type, (_m, _f, data_key) in _PARSERS.items()}
+
+
+def _url_suffix(url: str) -> str:
+    """Lower-case extension of the file a URL points at, or '' when unknown.
+
+    The path is read without its query string: a pre-signed OBS link carries the
+    signature in ``?X-Amz-...``, which would otherwise be mistaken for part of the
+    extension (``7501.pdf?X-Amz-Signature=...``). A link with no extension in the
+    path returns '', so callers can tell "not a PDF" from "cannot tell".
+    """
+    path = urllib.parse.urlsplit(url).path
+    return os.path.splitext(path)[1].lower()
+
+
+def resolve_parser_type(form_type: int, url: str, path: str | None = None) -> int:
+    """Pick the form type whose parser should actually run for this request.
+
+    CbpFormType=15 means "U.S. 7501 delivered as a raster screenshot", so it is
+    normally served by the OCR parser. When the delivered file is in fact a PDF,
+    the text layer is exact and roughly 50x faster than OCR, so it is parsed by
+    parse_7501.py (form type 10) instead. 25 / 20 are left alone: 20 expects a text
+    layer and a caller asking for 25 explicitly wants OCR.
+
+    The extension comes from *url* -- the original name -- and never from *path*,
+    the downloaded temp file, which is always named ``..._t15_<id>.pdf`` regardless
+    of what was actually fetched. Reading the temp name would route every 15 to the
+    text-layer parser and silently disable OCR.
+
+    When the URL carries no extension, the decision is made from the downloaded
+    file's magic bytes if *path* is given, and otherwise keeps OCR.
+    """
+    if form_type != FORM_TYPE_US_OCR:
+        return form_type
+
+    suffix = _url_suffix(url)
+    if suffix:
+        return FORM_TYPE_US if suffix in PDF_SUFFIXES else form_type
+
+    # No extension in the URL: sniff the downloaded bytes rather than guess.
+    if path and _looks_like_pdf(path):
+        return FORM_TYPE_US
+    return form_type
+
+
+def _looks_like_pdf(path: str) -> bool:
+    """True when the file starts with the %PDF- signature (or a UTF-8 BOM before it)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(1024)
+    except OSError:
+        return False
+    return b"%PDF-" in head[:8] or head.lstrip(b"\xef\xbb\xbf").startswith(b"%PDF-")
 
 
 def _resolve_form_type(payload: dict) -> int:
@@ -223,25 +280,36 @@ def on_message(channel, method, properties, body):
             msg_id, file_number, form_type, url[:80],
         )
 
-        # 1. Download PDF to a temp file
+        # 1. Download the file to a temp file. The temp name is always .pdf, which
+        # is why the parser is chosen from the original URL below and never from it.
         suffix  = f"_t{form_type}_{msg_id}.pdf"
         tmp_pdf = tempfile.mktemp(suffix=suffix)
         download_pdf(url, tmp_pdf)
         log.info("Downloaded %d bytes → %s", Path(tmp_pdf).stat().st_size, tmp_pdf)
 
-        # 2. Parse
-        result = parse_document(form_type, tmp_pdf, source=source_name)
+        # 2. Pick the parser. A requested 15 that turned out to be a PDF is served by
+        # the text-layer parser: exact, and much faster than OCR on the same input.
+        parser_type = resolve_parser_type(form_type, url, tmp_pdf)
+        if parser_type != form_type:
+            log.info(
+                "CbpFormType=%s with a PDF payload → parsing with CbpFormType=%s (%s)",
+                form_type, parser_type, _PARSERS[parser_type][0],
+            )
+        result = parse_document(parser_type, tmp_pdf, source=source_name)
         log.info("Parsed %d line items", result.get("line_item_count", 0))
 
         # 3. Publish result
         # The payload key names the form family it came from (us_data / ca_data)
         # so consumers can bind the field without first testing CbpFormType. Only
         # the matching key is present; the other one is omitted entirely.
-        data_key = _DATA_KEYS[form_type]
+        # 15 and 10 share the us_data key, so this stays true after the reroute.
+        data_key = _DATA_KEYS[parser_type]
         out_msg = json.dumps(
             {
                 "ID":           msg_id,
                 "FileNumber":   file_number,
+                # Echo what the caller asked for, not the parser that ran: the
+                # reroute is ours to decide and must not change their envelope.
                 "CbpFormType":  form_type,
                 "status":       "ok",
                 data_key:       result,
