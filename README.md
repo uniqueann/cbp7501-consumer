@@ -24,6 +24,24 @@ CBP Form 7501（美国海关进口报关单）与加拿大 CBSA BSF864 PDF 解�
 `15` / `25` 是 `10` / `20` 的 OCR 版本，**输出键与各自的文字层版本一致**，
 所以下游按 `us_data` / `ca_data` 绑定时两种来源可以互换。
 
+### `15` 的 PDF 自动降级
+
+`15` 正常走 OCR，但如果**入参 URL 的文件后缀是 `.pdf`**，会自动改用 `parse_7501.py`
+（即 `10` 的解析器）：PDF 文字层是精确值，比同一份文件做 OCR 快得多，也没有识别误差。
+
+```
+CbpFormType=15  +  a.pdf   →  parse_7501.py        （文字层）
+CbpFormType=15  +  a.jpg   →  parse_7501_line_ocr.py（OCR）
+```
+
+三点需要知道：
+
+- **只看 `15`**。`10` / `20` 本就要求文字层，`25` 是调用方明确要求 OCR 的，都不改
+- **后缀取自 URL，不是取自临时文件**。下载后的临时文件名恒为 `..._t15_<id>.pdf`，
+  读它会将`15` 全部误判为 PDF 而彻底关闭 OCR
+- **URL 无后缀时看文件头**（`%PDF-` magic），判断不出来则保持 OCR
+- 回传信封里的 `CbpFormType` 仍是调用方给的值 `15`，只有 `us_data` 的内容来自 `10` 的解析器
+
 所有解析器都是**首次使用时才导入**：只部署文字层解析器时不需要安装 OCR 依赖；
 反之亦然。缺少依赖只会让对应类型的那条消息报错，不会影响进程启动。
 
@@ -202,6 +220,50 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 - **line_items**：行项目列表（商品描述、HTSUS、数量、关税税率与金额等）
 - **line_item_count**：行项目数量
 
+### 数量的两个字段（容易混，务必区分）
+
+同一份 7501 上有两个不同的数量概念，分别放在不同层级：
+
+| 字段 | 含义 | 数据来源 | 示例 |
+|---|---|---|---|
+| `header.manifest_quantity` | **整票箱数**，一个申报一个值 | 提单行末尾（`... a 520 CT`）或独立的 manifest 行 | `652 CTN` |
+| `line_items[].manifest_note` | **该行净数量**（Net Quantity in HTSUS Units） | 每行商品行的数量列 | `420.00 NO` |
+
+```json
+{
+  "header": { "manifest_quantity": "652 CTN" },
+  "line_items": [
+    { "line_no": "001", "manifest_note": "420.00 NO",
+      "commodity": { "net_quantity": 420.0, "net_quantity_unit": "NO" } },
+    { "line_no": "002", "manifest_note": "172.00 NO" },
+    { "line_no": "003", "manifest_note": "60.00 NO" }
+  ]
+}
+```
+
+要点：
+
+- **`manifest_note` 是每行自己的数值**，格式为「数量 + HTSUS 计量单位」，保留 **两位小数**（`420.00 NO`、`41.33 DOZ`、`477.36 KG`）
+- 它**不是**箱数。早期版本把整票箱数放到第一行的 `manifest_note`，一个数值覆盖了所有行——已修正
+- `manifest_note` 与 `commodity.net_quantity` / `net_quantity_unit` 同源，是后两者的格式化视图；直接取数值请用 `commodity`，取展示字符串请用 `manifest_note`
+- 某行数量读不到时 `manifest_note` 为 `null`，**不会**借用其他行的值，也不会编造 `0.00`
+- **`15`（OCR 路径）下的差异**：行项目截图不含表头区，所以 `header` 为 `null`，也就没有 `header.manifest_quantity`；`line_items[].manifest_note` 照常按行给出（`420.00 NO`）
+
+#### `header.manifest_quantity` 的单位归一化
+
+单据上同一个箱数的单位写法不统一，统一规整为 **`CTN`**：
+
+| 原文 | 输出 | 说明 |
+|---|---|---|
+| `520 CT` | `520 CTN` | 短写 |
+| `365 CTNS` | `365 CTN` | 复数 |
+| `652 PCS` | `652 CTN` | 件数 |
+| `12 PKG` | `12 CTN` | 包装数 |
+| `1,320 CTN` | `1,320 CTN` | 千分位保留 |
+| `5133 KG` | `5133 KG` | **重量不当作箱数**，原样保留 |
+
+数值部分按单据原样保留（含千分位逗号），只有单位被改写。
+
 **`CbpFormType=20`（加拿大 BSF864）** 时 `ca_data` 采用 BSF864 原生结构（`schema_version` 2.0），不再模仿 7501：
 
 ```json
@@ -241,7 +303,9 @@ python parse_cad.py files/input/CAD-1.pdf files/output/CAD-1.json
 ```
 INPUT_QUEUE → 下载文件 → CbpFormType?
                           ├─ 10 → parse_7501.parse()           （PDF 文字层）
-                          ├─ 15 → parse_7501_line_ocr.parse_result()  （本地 OCR）
+                          ├─ 15 → 后缀是 .pdf?
+                          │        ├─ 是 → parse_7501.parse()          （文字层）
+                          │        └─ 否 → parse_7501_line_ocr.parse_result()（本地 OCR）
                           ├─ 20 → parse_cad.parse()            （PDF 文字层）
                           └─ 25 → parse_b3_line_ocr.parse_result()    （本地 OCR）
                                 → OUTPUT_QUEUE → ACK

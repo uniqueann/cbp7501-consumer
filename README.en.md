@@ -25,6 +25,29 @@ PDF parsing service for **CBP Form 7501** (U.S. Customs Entry Summary) and **Can
 key** as their text-layer siblings, so downstream code binding `us_data` / `ca_data`
 treats both sources interchangeably.
 
+### Automatic text-layer fallback for `15`
+
+`15` normally runs OCR, but when the **input URL ends in `.pdf`** it is parsed by
+`parse_7501.py` (the same parser as `10`): a PDF text layer is exact and far faster than
+OCRing the same document.
+
+```
+CbpFormType=15  +  a.pdf   →  parse_7501.py         (text layer)
+CbpFormType=15  +  a.jpg   →  parse_7501_line_ocr.py (OCR)
+```
+
+Four things worth knowing:
+
+- **Only `15` is rerouted.** `10` / `20` already require a text layer, and a caller asking
+  for `25` explicitly wants OCR.
+- **The extension comes from the URL, never from the temp file.** The downloaded temp file
+  is always named `..._t15_<id>.pdf`; reading that would route every `15` to the text-layer
+  parser and silently disable OCR.
+- **When the URL has no extension** the downloaded bytes are sniffed for the `%PDF-` magic;
+  if that is inconclusive, OCR stays in charge.
+- **The reply still echoes `CbpFormType=15`.** Only the contents of `us_data` come from the
+  `10` parser; the envelope keeps the caller's requested value.
+
 Every parser is **imported only on first use**: a deployment that serves only text-layer
 PDFs does not need the OCR packages, and vice versa. A missing dependency fails just that
 one message, naming the absent package, without affecting process startup.
@@ -207,6 +230,50 @@ typically contains:
 - **line_items**: line-level commodity data (descriptions, HTSUS, quantities, duty rates and amounts)
 - **line_item_count**: number of line items
 
+### The two quantity fields (easy to confuse)
+
+A 7501 carries two different quantity concepts, and they live at different levels:
+
+| Field | Meaning | Source | Example |
+|---|---|---|---|
+| `header.manifest_quantity` | **Whole-declaration box count**, one per entry | Trailing the BL row (`... a 520 CT`) or a standalone manifest row | `652 CTN` |
+| `line_items[].manifest_note` | **That line's net quantity** (Net Quantity in HTSUS Units) | The quantity column of each item row | `420.00 NO` |
+
+```json
+{
+  "header": { "manifest_quantity": "652 CTN" },
+  "line_items": [
+    { "line_no": "001", "manifest_note": "420.00 NO",
+      "commodity": { "net_quantity": 420.0, "net_quantity_unit": "NO" } },
+    { "line_no": "002", "manifest_note": "172.00 NO" },
+    { "line_no": "003", "manifest_note": "60.00 NO" }
+  ]
+}
+```
+
+Notes:
+
+- **`manifest_note` is per line**, formatted as `<quantity> <HTSUS unit>` with **two decimals** (`420.00 NO`, `41.33 DOZ`, `477.36 KG`)
+- It is **not** the box count. An earlier build put the declaration-wide box count on the first line's `manifest_note`, so one figure stood in for every line -- fixed
+- `manifest_note` shares its source with `commodity.net_quantity` / `net_quantity_unit` and is the formatted view of those two; read `commodity` for the number, `manifest_note` for the display string
+- When a line's quantity could not be read, `manifest_note` is `null` -- it never borrows another line's value or invents `0.00`
+- **On the `15` (OCR) path**: a line-item screenshot has no header block, so `header` is `null` and there is no `header.manifest_quantity`; `line_items[].manifest_note` is still filled per line (`420.00 NO`)
+
+#### Unit normalisation for `header.manifest_quantity`
+
+The form spells the same box count several ways; every package unit is normalised to **`CTN`**:
+
+| Printed | Output | Note |
+|---|---|---|
+| `520 CT` | `520 CTN` | short form |
+| `365 CTNS` | `365 CTN` | plural |
+| `652 PCS` | `652 CTN` | piece count |
+| `12 PKG` | `12 CTN` | package count |
+| `1,320 CTN` | `1,320 CTN` | thousands separator kept |
+| `5133 KG` | `5133 KG` | **a weight is not a box count**, left as printed |
+
+The numeric part is kept exactly as printed (thousands separator included); only the unit is rewritten.
+
 For **`CbpFormType=20`** and **`CbpFormType=25`** (Canada BSF864), `ca_data` uses the native BSF864 shape (`schema_version` 2.0) rather than mirroring the 7501 result:
 
 ```json
@@ -246,7 +313,9 @@ Key points:
 ```
 INPUT_QUEUE → download file → CbpFormType?
                              ├─ 10 → parse_7501.parse()                  (PDF text layer)
-                             ├─ 15 → parse_7501_line_ocr.parse_result()  (local OCR)
+                             ├─ 15 → URL ends in .pdf?
+                             │        ├─ yes → parse_7501.parse()            (text layer)
+                             │        └─ no  → parse_7501_line_ocr.parse_result() (OCR)
                              ├─ 20 → parse_cad.parse()                   (PDF text layer)
                              └─ 25 → parse_b3_line_ocr.parse_result()    (local OCR)
                                    → OUTPUT_QUEUE → ACK
