@@ -82,6 +82,73 @@ class ManifestQuantityNormalisationTests(unittest.TestCase):
         self.assertEqual(parse_7501.normalise_manifest_quantity("300 PCS"), "300 CTN")
 
 
+class MultipleNetQuantityPairsTests(unittest.TestCase):
+    """Box 35 may print several quantity/unit pairs; the LAST NO pair is the line's.
+
+    MRSU4170911 line 004 prints "3 KG  1.60 KG" on the row carrying the HTSUS and
+    rate, with "10.00 NO" wrapped onto the next line. Reading only the first row
+    reported 1.60 KG for a line whose declared quantity is 10 NO.
+    """
+
+    WRAPPED = [
+        "004 ARTICLE OF CHINA,US NTE 20(F)",
+        "9903.88.03 25% $2.25",
+        "PRDTS OF CHINA, NOTE 52",
+        "9903.05.31 12.5% $1.13",
+        "OTHER PARTS OF FURNITURE",
+        "9403.99.9061 3 KG 1.60 KG $9 FREE $0.00",
+        "10.00 NO C $1",
+        "499 - Merchandise Processing Fee 0.3464% $0.03",
+    ]
+
+    def test_last_no_pair_wins_over_an_earlier_kg_pair(self):
+        _, item = _parse_block(self.WRAPPED)
+        commodity = item["commodity"]
+        self.assertEqual(commodity["net_quantity"], 10.0)
+        self.assertEqual(commodity["net_quantity_unit"], "NO")
+
+    def test_manifest_note_matches_the_chosen_quantity(self):
+        # manifest_note is derived from commodity.net_quantity in parse(), so the
+        # two must agree once the rule is applied.
+        _, item = _parse_block(self.WRAPPED)
+        self.assertEqual(
+            parse_7501.format_net_quantity(
+                item["commodity"]["net_quantity"],
+                item["commodity"]["net_quantity_unit"],
+            ),
+            "10.00 NO",
+        )
+
+    def test_later_no_pair_beats_an_earlier_one(self):
+        lines = ["001 BLANKETS, ELECTRIC",
+                 "6301.10.0000 392 KG 5.00 NO $1,159 11.4% $132.13",
+                 "522.00 NO"]
+        _, item = _parse_block(lines)
+        self.assertEqual(item["commodity"]["net_quantity"], 522.0)
+        self.assertEqual(item["commodity"]["net_quantity_unit"], "NO")
+
+    def test_a_line_with_no_no_pair_keeps_its_own_unit(self):
+        # H-1 declares a KG line; nothing here may be rewritten to NO.
+        lines = ["001 FURNITURE PARTS",
+                 "9403.99.9061 392 KG 477.36 KG 2000 FREE 0.00"]
+        _, item = _parse_block(lines)
+        self.assertEqual(item["commodity"]["net_quantity"], 477.36)
+        self.assertEqual(item["commodity"]["net_quantity_unit"], "KG")
+
+    def test_helper_reports_none_without_a_no_pair(self):
+        for lines in (["9403.99.9061 477.36 KG $2,000 FREE $0.00"],
+                      ["29 CTN"],
+                      []):
+            with self.subTest(lines=lines):
+                self.assertIsNone(parse_7501.last_no_net_quantity(lines))
+
+    def test_helper_takes_the_last_of_several_no_pairs(self):
+        self.assertEqual(
+            parse_7501.last_no_net_quantity(["300.00 NO", "10.00 NO C $1"]),
+            (10.0, "NO"),
+        )
+
+
 class NetQuantityFormatTests(unittest.TestCase):
     """line_items[].manifest_note renders "<qty> <UNIT>" as the form prints it."""
 

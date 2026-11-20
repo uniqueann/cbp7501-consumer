@@ -132,6 +132,14 @@ COMMODITY_V2_C1_RE = re.compile(
     r"\s+\$?([\d,.]+)$"           # duty_amount (allow comma)
 )
 
+# The same row can print MORE than one net-quantity pair in box 35. MRSU4170911
+# line 004 reads "3 KG  1.60 KG $9 FREE $0.00" with "10.00 NO" wrapped onto the
+# next printed line, so the row above only carries the first (KG) pair. The rule
+# for the line's quantity is the LAST pair whose unit is NO -- NO is the HTSUS
+# "number" unit the downstream report reads. This pattern finds such a pair
+# anywhere in a line, including one followed by the CHGS cell ("10.00 NO C $1").
+NET_QTY_NO_RE = re.compile(r"(\d[\d,.]*)\s+NO\b")
+
 # Tariff subheading (8/9-digit): three formats
 #   KG:    9903.76.04  6765 KG  0  Freen  0.00
 #   No KG: 9903.03.01  X  0  10%  263.40
@@ -314,6 +322,50 @@ def normalise_manifest_quantity(raw: str | None) -> str:
     match = re.match(r"\s*(\d[\d,]*)\s*(?:CT|CTN|CTNS|PCS|PKG|PKGS)\s*$",
                      str(raw), re.I)
     return f"{match.group(1)} CTN" if match else str(raw).strip()
+
+
+def last_no_net_quantity(lines: list[str]) -> tuple[float, str] | None:
+    """Return the LAST "<qty> NO" net quantity printed inside one line-item block.
+
+    Box 35 can print more than one quantity/unit pair for a single line item. On
+    MRSU4170911 line 004 the block reads::
+
+        9403.99.9061   3 KG   1.60 KG         $9    FREE   $0.00
+                             10.00 NO         C $1
+
+    "1.60 KG" and "10.00 NO" are both in box 35, and the row that carries the
+    HTSUS/rate/duty columns only holds the first (KG) pair, so reading just that
+    row reports the wrong quantity for the line. The quantity the declaration
+    means is the NO pair -- NO is the HTSUS "number" unit -- and when several
+    are printed the last one wins.
+
+    Returns ``(quantity, "NO")`` or None when the block prints no NO pair (the
+    line's unit may legitimately be KG, DOZ, M2, ...).
+    """
+    raw_qty = None
+    for raw in lines:
+        for match in NET_QTY_NO_RE.finditer(raw):
+            raw_qty = match.group(1)
+    if raw_qty is None:
+        return None
+    value = _money(raw_qty)
+    return (value, "NO") if isinstance(value, float) else None
+
+
+def _apply_last_no_net_quantity(entry: dict, block_lines: list[str]) -> None:
+    """Point the item's net quantity at the block's last NO pair, if it has one.
+
+    commodity.net_quantity / net_quantity_unit are the single source both the
+    JSON fields and line_items[].manifest_note are built from, so fixing them
+    here keeps those three in agreement.
+    """
+    found = last_no_net_quantity(block_lines)
+    if found is None:
+        return
+    commodity = entry.get("commodity") or {}
+    if not commodity:
+        return
+    commodity["net_quantity"], commodity["net_quantity_unit"] = found
 
 
 def _extract_text(pdf_path: str) -> list[str]:
@@ -1754,6 +1806,10 @@ def _parse_block_v2(lines):
     if (entry["line_no"].isdigit() and int(entry["line_no"]) >= 100
         and not entry["commodity"] and not entry["tariff_subheadings"]):
         return None
+
+    # Box 35 may print several quantity/unit pairs for one line item; the LAST
+    # NO pair is the quantity the line declares (see last_no_net_quantity).
+    _apply_last_no_net_quantity(entry, lines)
 
     return entry
 
